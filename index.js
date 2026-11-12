@@ -87,3 +87,9 @@ async function startBot() {
 }
 
 startBot().catch((err) => console.error('خطأ غير متوقع:', err));
+if (!sock.authState.creds.registered) {
+    setTimeout(async () => {
+        const code = await sock.requestPairingCode('201144953155');
+        console.log('\n🔑 كود الربط بتاعك هو: ' + code + '\n');
+    }, 3000);
+}
