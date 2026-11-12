@@ -33,6 +33,13 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds);
 
     // لو لسه مش مربوط، اطلب كود ربط
+    if (!sock.authState.creds.registered) {
+        try {
+            setTimeout(async () => {
+                const code = await sock.requestPairingCode('201144953155');
+                console.log('\n🔑 كود الربط بتاعك هو: ' + code + '\n');
+            }, 3000);
+        } catch (e) {
             console.log('في مشكلة في طلب الكود:', e.message);
             console.log('اتأكد ان الرقم صح، وامسح مجلد auth_info_baileys وجرب تاني');
         }
@@ -87,9 +94,3 @@ async function startBot() {
 }
 
 startBot().catch((err) => console.error('خطأ غير متوقع:', err));
-if (!sock.authState.creds.registered) {
-    setTimeout(async () => {
-        const code = await sock.requestPairingCode('201144953155');
-        console.log('\n🔑 كود الربط بتاعك هو: ' + code + '\n');
-    }, 3000);
-}
