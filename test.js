@@ -7,8 +7,16 @@ export default {
 
     execute: async ({ sock, chatId, msg }) => {
         
+        // مسار الصورة
         const thumbnailPath = path.join(process.cwd(), 'media', 'kaido.png');
-        const thumbnail = fs.readFileSync(thumbnailPath);
+        let thumbnail = null;
+
+        // التأكد إن الصورة موجودة عشان ميعملش كراش
+        if (fs.existsSync(thumbnailPath)) {
+            thumbnail = fs.readFileSync(thumbnailPath);
+        } else {
+            console.log("⚠️ تحذير: صورة kaido.png مش موجودة!");
+        }
 
         await sock.sendMessage(
             chatId,
@@ -18,9 +26,9 @@ export default {
                     externalAdReply: {
                         title: '𝑲𝒂𝒊𝒅𝒐 𝐁𝐎𝐓',
                         body: '𝑲𝒂𝒊𝒅𝒐 𝐒𝐘𝐒𝐓𝐄𝐌',
-                        thumbnail: thumbnail,
+                        thumbnail: thumbnail, 
                         mediaType: 1,
-                        renderLargerThumbnail: true,
+                        renderLargerThumbnail: true, 
                         showAdAttribution: false
                     }
                 }
