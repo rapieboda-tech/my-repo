@@ -33,18 +33,6 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds);
 
     // لو لسه مش مربوط، اطلب كود ربط
-    if (!sock.authState.creds.registered) {
-        let phone = await ask('\nاكتب رقم الواتساب بكود الدولة من غير + مثال 2010xxxxxxxx : ');
-        phone = phone.replace(/[^0-9]/g, '');
-
-        try {
-            const code = await sock.requestPairingCode(phone);
-            console.log('\n======================================');
-            console.log('  كود الربط بتاعك هو : ' + code);
-            console.log('  روح واتساب > الاجهزة المرتبطة > ربط برقم الهاتف');
-            console.log('  واكتب الكود ده هناك');
-            console.log('======================================\n');
-        } catch (e) {
             console.log('في مشكلة في طلب الكود:', e.message);
             console.log('اتأكد ان الرقم صح، وامسح مجلد auth_info_baileys وجرب تاني');
         }
