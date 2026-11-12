@@ -5,11 +5,18 @@ const {
     Browsers,
     fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
-const qrcode = require('qrcode-terminal');
 const pino = require('pino');
 const fs = require('fs');
+const readline = require('readline');
 
 const AUTH_DIR = 'auth_info_baileys';
+
+// دي عشان يطلب منك الرقم في التيرمنال
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
+const ask = (q) => new Promise(res => rl.question(q, res));
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -19,19 +26,32 @@ async function startBot() {
         version,
         auth: state,
         logger: pino({ level: 'silent' }),
-        browser: Browsers.ubuntu('Chrome')
+        browser: Browsers.ubuntu('Chrome'),
+        printQRInTerminal: false // قفلنا الـ QR خالص
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
+    // لو لسه مش مربوط، اطلب كود ربط
+    if (!sock.authState.creds.registered) {
+        let phone = await ask('\nاكتب رقم الواتساب بكود الدولة من غير + مثال 2010xxxxxxxx : ');
+        phone = phone.replace(/[^0-9]/g, '');
 
-        // عرض الـ QR في التيرمنال (بيتجدد تلقائي كل فترة)
-        if (qr) {
-            console.log('\nافتح واتساب > الأجهزة المرتبطة > ربط جهاز، وامسح الكود:\n');
-            qrcode.generate(qr, { small: true });
+        try {
+            const code = await sock.requestPairingCode(phone);
+            console.log('\n======================================');
+            console.log('  كود الربط بتاعك هو : ' + code);
+            console.log('  روح واتساب > الاجهزة المرتبطة > ربط برقم الهاتف');
+            console.log('  واكتب الكود ده هناك');
+            console.log('======================================\n');
+        } catch (e) {
+            console.log('في مشكلة في طلب الكود:', e.message);
+            console.log('اتأكد ان الرقم صح، وامسح مجلد auth_info_baileys وجرب تاني');
         }
+    }
+
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
 
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -43,11 +63,11 @@ async function startBot() {
                 fs.rmSync(AUTH_DIR, { recursive: true, force: true });
                 process.exit(0);
             } else {
-                // يشمل كود 515 (إعادة تشغيل طبيعية بعد نجاح الربط)
                 setTimeout(startBot, 2000);
             }
         } else if (connection === 'open') {
             console.log('\n✅ تم الاتصال بنجاح! البوت جاهز.');
+            rl.close();
         }
     });
 
@@ -78,4 +98,4 @@ async function startBot() {
     });
 }
 
-startBot().catch((err) => console.error('خطأ غير متوقع:', err))
+startBot().catch((err) => console.error('خطأ غير متوقع:', err));
