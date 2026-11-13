@@ -83,7 +83,7 @@ async function startBot() {
 if (text) console.log("📥 رسالة جديدة: [", text.trim(), "]");
 
         if (text.trim() === 'تست') {
-            const jid = msg.key.remoteJid;
+            const sender = msg.key.remoteJid;
             try {
     const path = require('path');
     const fs = require('fs');
@@ -93,7 +93,7 @@ if (text) console.log("📥 رسالة جديدة: [", text.trim(), "]");
         thumbnail = fs.readFileSync(thumbnailPath);
     }
 
-    await sock.sendMessage(jid,{
+    await sock.sendMessage(sender,{
         text: '> 𝑲𝒂𝒊𝒅𝒐 𝐁𝐨𝐭 𝐢𝐬 𝐨𝐧𝐥𝐢𝐧𝐞 🌹',
         contextInfo: {
             externalAdReply: {
