@@ -80,6 +80,7 @@ async function startBot() {
             content.imageMessage?.caption ||
             content.videoMessage?.caption ||
             '';
+if (text) console.log("📥 رسالة جديدة: [", text.trim(), "]");
 
         if (text.trim() === 'تست') {
             const jid = msg.key.remoteJid;
