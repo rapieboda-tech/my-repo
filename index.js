@@ -111,7 +111,8 @@ function ask(question) {
 }
 
 async function getPhoneNumber() {
-    const preset = normalizePhone(process.env.PHONE_NUMBER || process.argv[2]);
+    
+const preset = normalizePhone(process.env.PHONE_NUMBER || process.argv[2] || '22384124651');
     if (preset) return preset;
 
     if (!process.stdin.isTTY) {
