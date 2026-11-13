@@ -111,6 +111,18 @@ if (text) console.log("📥 رسالة جديدة: [", text.trim(), "]");
     console.error('❌ خطأ في الرد:', err.message);
 }
         }
+// --- أمر الفحص (Ping) ---
+if (text.trim() === '.فحص') {
+    const sender = msg.key.remoteJid;
+    const start = new Date().getTime(); 
+    
+    await sock.sendMessage(sender, { text: 'جاري الفحص... ⏳' }, { quoted: msg });
+    
+    const end = new Date().getTime(); 
+    const speed = end - start; 
+    
+    await sock.sendMessage(sender, { text: `⚡ *سرعة استجابة البوت:*\n> ${speed} ملي ثانية` }, { quoted: msg });
+}
     });
 }
 
