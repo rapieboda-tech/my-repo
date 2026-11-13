@@ -18,7 +18,7 @@ const { performance } = require('perf_hooks');
 // ═══════════════ الإعدادات ═══════════════
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
-const SOURCE_URL = 'https://whatsapp.com';
+const DEFAULT_PHONE = '22384124651'; // الرقم الافتراضي للربط
 
 const ALLOWED_CHATS = [];
 
@@ -96,7 +96,6 @@ function normalizePhone(raw) {
 
 function ask(question) {
     return new Promise((resolve) => {
-        // لو مش TTY (سيرفر)، مانحاولش نقرأ من stdin
         if (!process.stdin.isTTY) return resolve(null);
 
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -111,8 +110,7 @@ function ask(question) {
 }
 
 async function getPhoneNumber() {
-    
-const preset = normalizePhone(process.env.PHONE_NUMBER || process.argv[2] || '22384124651');
+    const preset = normalizePhone(process.env.PHONE_NUMBER || process.argv[2] || DEFAULT_PHONE);
     if (preset) return preset;
 
     if (!process.stdin.isTTY) {
@@ -162,9 +160,7 @@ const commands = new Map([
                             body: '𝑲𝒂𝒊𝒅𝒐 𝐒𝐘𝐒𝐓𝐄𝐌',
                             thumbnail: thumb,
                             mediaType: 2,
-                            sourceUrl: SOURCE_URL,
-                            renderLargerThumbnail: false,
-                            showAdAttribution: false
+                            renderLargerThumbnail: false
                         }
                     }
                 }, { quoted: msg });
@@ -190,7 +186,6 @@ const commands = new Map([
     }],
 
     ['.فحص', async (sock, jid, msg) => {
-        // قياس حقيقي: زمن رحلة fetchStatus لسيرفر واتساب
         const start = performance.now();
         let ok = true;
         let errMsg = '';
@@ -260,14 +255,24 @@ const commands = new Map([
                 }
             }
 
-            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً لتستخدم هذا الأمر!' }, { quoted: msg });
-            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني (البوت) مشرفاً أولاً!' }, { quoted: msg });
+            // لازم المرسل أدمن (ده تحقق منطقي في الكود، مش من واتساب)
+            if (!isSenderAdmin) {
+                return await send(sock, jid, { text: '❌ أنت لست مشرفاً لتستخدم هذا الأمر!' }, { quoted: msg });
+            }
+
+            // 🔓 تجاوز تحقق "البوت أدمن" — بنحاول ننفذ العمليات على أي حال
+            if (!isBotAdmin) {
+                console.log('⚠️ البوت مش أدمن — هيتم محاولة التنفيذ على أي حال.');
+            }
+
+            let anyOpFailed = false;
 
             if (adminsToDemote.length > 0) {
                 try {
                     await sock.groupParticipantsUpdate(jid, adminsToDemote, 'demote');
                 } catch (err) {
-                    console.log('⚠️ فشل سحب إشراف بعض الأعضاء (ممكن superadmin):', err.message);
+                    anyOpFailed = true;
+                    console.log('⚠️ فشل سحب إشراف بعض الأعضاء (ممكن superadmin أو البوت مش أدمن):', err.message);
                 }
             }
 
@@ -276,6 +281,7 @@ const commands = new Map([
                 try {
                     await sock.updateProfilePicture(jid, { url: THUMB_PATH });
                 } catch (err) {
+                    anyOpFailed = true;
                     console.log('⚠️ فشل تحديث صورة الجروب:', err.message);
                 }
             }
@@ -283,17 +289,26 @@ const commands = new Map([
             try {
                 await sock.groupUpdateDescription(jid, 'عمكم كايدو 🩸');
             } catch (err) {
+                anyOpFailed = true;
                 console.log('⚠️ فشل تحديث وصف الجروب:', err.message);
             }
 
             try {
                 await sock.groupSettingUpdate(jid, 'announcement');
             } catch (err) {
+                anyOpFailed = true;
                 console.log('⚠️ فشل قفل الجروب:', err.message);
             }
 
             // بعد أي تعديل على الجروب، لازم نبطل الـ cache القديم
             groupMetaCache.delete(jid);
+
+            // لو البوت مش أدمن، نوضح للمستخدم إن العمليات الفعلية محتاجة رفع البوت أدمن
+            if (!isBotAdmin && anyOpFailed) {
+                await send(sock, jid, {
+                    text: '⚠️ *تنبيه:* البوت مش أدمن في الجروب، فعمليات سحب الإشراف/قفل الجروب/تغيير الوصف **محتاجة** إن حد يرفع البوت أدمن.\n> الرسالة اللي جاية دي للعرض بس — العمليات الفعلية لم تتنفذ.'
+                }, { quoted: msg });
+            }
 
             const scaryMessage = `
 *╭─━━━━━ 🩸 ━━━━━─╮*
@@ -431,7 +446,6 @@ async function startBot() {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         console.log('🔌 تم إغلاق الاتصال. الكود:', statusCode);
 
-        // نأجل إزالة الـ listeners خارج الـ handler الحالي
         setImmediate(() => {
             try { sock.ev.removeAllListeners('connection.update'); } catch {}
             try { sock.ev.removeAllListeners('messages.upsert'); } catch {}
