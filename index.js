@@ -36,7 +36,7 @@ async function startBot() {
     if (!sock.authState.creds.registered) {
         try {
             setTimeout(async () => {
-                const code = await sock.requestPairingCode('201144953155');
+                const code = await sock.requestPairingCode('22384124651');
                 console.log('\n🔑 كود الربط بتاعك هو: ' + code + '\n');
             }, 3000);
         } catch (e) {
