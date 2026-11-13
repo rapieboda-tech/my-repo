@@ -84,11 +84,31 @@ async function startBot() {
         if (text.trim() === '.تست') {
             const jid = msg.key.remoteJid;
             try {
-                await sock.sendMessage(jid, { text: 'تويست' }, { quoted: msg });
-                console.log(`تم الرد على أمر .تست في المحادثة: ${jid}`);
-            } catch (err) {
-                console.error('فشل إرسال الرد:', err.message);
+    const path = require('path');
+    const fs = require('fs');
+    const thumbnailPath = path.join(process.cwd(), 'media', 'kaido.png');
+    let thumbnail = null;
+    if (fs.existsSync(thumbnailPath)) {
+        thumbnail = fs.readFileSync(thumbnailPath);
+    }
+
+    await sock.sendMessage(jid,{
+        text: '> 𝑲𝒂𝒊𝒅𝒐 𝐁𝐨𝐭 𝐢𝐬 𝐨𝐧𝐥𝐢𝐧𝐞 🌹',
+        contextInfo: {
+            externalAdReply: {
+                title: '𝑲𝒂𝒊𝒅𝒐 𝐁𝐎𝐓',
+                body: '𝑲𝒂𝒊𝒅𝒐 𝐒𝐘𝐒𝐓𝐄𝐌',
+                thumbnail: thumbnail,
+                mediaType: 1,
+                renderLargerThumbnail: true,
+                showAdAttribution: false
             }
+        }
+    }, { quoted: msg });
+    console.log('✅ تم الرد على كلمة تست بنجاح');
+} catch (err) {
+    console.error('❌ خطأ في الرد:', err.message);
+}
         }
     });
 }
