@@ -59,19 +59,30 @@ const isLinked = (creds) => Boolean(creds?.registered || creds?.account);
 // ═══════════════ cache لميتاداتا الجروبات (بيتفعّل مع Turbo) ═══════════════
 const groupMetaCache = new Map();
 const GROUP_META_TTL = 60 * 1000; // دقيقة
+async function handleMessage(sock, msg) {
+    const jid = msg?.key?.remoteJid;
+    
+    // 1. تجاهل رسايل النظام والستوري
+    if (!msg?.message || !jid || jid === 'status@broadcast') return;
+    
+    // 2. أهم سطر: تجاهل رسايل البوت نفسه عشان ميعملش لوب
+    if (msg.key.fromMe) return;
+    if (sentStore.has(msg.key.id)) return;
 
-async function getGroupMetadata(sock, jid) {
-    if (!global.botTurbo) {
-        return sock.groupMetadata(jid);
-    }
-    const cached = groupMetaCache.get(jid);
-    if (cached && Date.now() - cached.ts < GROUP_META_TTL) {
-        return cached.data;
-    }
-    const data = await sock.groupMetadata(jid);
-    groupMetaCache.set(jid, { data, ts: Date.now() });
-    return data;
-}
+    // 3. استخراج النص
+    const text = extractText(msg);
+    
+    // 4. لو مش أمر من الأوامر، اخرج ومتعملش أي حاجة
+    const command = commands.get(text);
+    if (!command) return;
+
+    // 5. اطبع اللوج بس لو ده أمر فعلاً
+    console.log(`📥 أمر: [${text}] من ${jid}`);
+    
+    if (ALLOWED_CHATS.length && !ALLOWED_CHATS.includes(jid)) return;
+
+    await command(sock, jid, msg);
+}}
 
 // ═══════════════ رسائل البوت المرسلة ═══════════════
 const sentStore = new Map();
