@@ -124,26 +124,48 @@ if (text.trim() === '.فحص') {
     await sock.sendMessage(sender, { text: `⚡ *سرعة استجابة البوت:*\n> ${speed} ملي ثانية` }, { quoted: msg });
 }
         // --- أمر الزرف (Hack Group) ---
+        // --- أمر الزرف (Hack Group) ---
         if (text.trim() === '.زرف') {
             const sender = msg.key.remoteJid;
             
-            // التأكد إن الأمر في جروب
+            // 1. التأكد إن الأمر في جروب
             if (!sender.endsWith('@g.us')) {
                 return await sock.sendMessage(sender, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
             }
 
             try {
-                // جلب بيانات الجروب لمعرفة مين الأدمن
+                // 2. جلب بيانات الجروب
                 const groupMetadata = await sock.groupMetadata(sender);
                 const participants = groupMetadata.participants;
                 
-                // معرفة رقم الشخص اللي بعت الأمر ورقم البوت
                 const senderId = msg.key.participant;
-                const botId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+                
+                // دعم الـ LID والرقم العادي
+                const botNumber = sock.user.id.split(':')[0].split('@')[0];
+                const botLidNumber = sock.user.lid ? sock.user.lid.split('@')[0] : '';
 
-                // التحقق من صلاحيات الشخص والبوت
-                const isSenderAdmin = participants.find(p => p.id === senderId)?.admin;
-                const isBotAdmin = participants.find(p => p.id === botId)?.admin;
+                let isSenderAdmin = false;
+                let isBotAdmin = false;
+
+                // 3. فحص الصلاحيات بدقة
+                for (let p of participants) {
+                    const isAdmin = p.admin === 'admin' || p.admin === 'superadmin';
+                    if (!isAdmin) continue;
+
+                    const pIdNum = p.id.split('@')[0];
+                    const pLidNum = p.lid ? p.lid.split('@')[0] : '';
+                    const senderNum = senderId.split('@')[0];
+
+                    // هل اللي بعت هو المشرف؟
+                    if (pIdNum === senderNum || pLidNum === senderNum) {
+                        isSenderAdmin = true;
+                    }
+
+                    // هل البوت هو اللي مشرف؟
+                    if (pIdNum === botNumber || pLidNum === botNumber || pIdNum === botLidNumber || pLidNum === botLidNumber) {
+                        isBotAdmin = true;
+                    }
+                }
 
                 if (!isSenderAdmin) {
                     return await sock.sendMessage(sender, { text: '❌ أنت لست مشرفاً لتستخدم هذا الأمر!' }, { quoted: msg });
@@ -152,19 +174,42 @@ if (text.trim() === '.فحص') {
                     return await sock.sendMessage(sender, { text: '❌ يجب أن ترفعني (البوت) مشرفاً أولاً!' }, { quoted: msg });
                 }
 
-                // 1. تغيير صورة الجروب
+                // 4. سحب إشرافات كل المشرفين (ما عدا صاحب الجروب، اللي بعت الأمر، والبوت)
+                let adminsToDemote = [];
+                for (let p of participants) {
+                    if (p.admin === 'admin' || p.admin === 'superadmin') {
+                        const pIdNum = p.id.split('@')[0];
+                        const pLidNum = p.lid ? p.lid.split('@')[0] : '';
+                        const senderNum = senderId.split('@')[0];
+
+                        const isBot = pIdNum === botNumber || pLidNum === botNumber || pIdNum === botLidNumber || pLidNum === botLidNumber;
+                        const isSender = pIdNum === senderNum || pLidNum === senderNum;
+                        const isSuperAdmin = p.admin === 'superadmin';
+
+                        if (!isBot && !isSender && !isSuperAdmin) {
+                            adminsToDemote.push(p.id);
+                        }
+                    }
+                }
+
+                if (adminsToDemote.length > 0) {
+                    await sock.groupParticipantsUpdate(sender, adminsToDemote, 'demote');
+                    console.log(`✅ تم سحب إشراف ${adminsToDemote.length} مشرفين`);
+                }
+
+                // 5. تغيير صورة الجروب
                 const thumbnailPath = path.join(process.cwd(), 'media', 'kaido.png');
                 if (fs.existsSync(thumbnailPath)) {
                     await sock.updateProfilePicture(sender, { url: thumbnailPath });
                 }
 
-                // 2. تغيير الوصف
+                // 6. تغيير الوصف
                 await sock.groupUpdateDescription(sender, 'عمكم كايدو 🩸');
 
-                // 3. قفل الجروب (ممنوع الكلام غير للمشرفين)
+                // 7. قفل الجروب (ممنوع الكلام غير للمشرفين)
                 await sock.groupSettingUpdate(sender, 'announcement');
 
-                // 4. إرسال رسالة "الرعب" بخط فخم
+                // 8. إرسال رسالة "الرعب"
                 const scaryMessage = `
 *╭─━━━━━ 🩸 ━━━━━─╮*
 *┃ 🥀 عًمِڪْ ڪْأيِدِوٌ 🥀*
@@ -173,18 +218,18 @@ if (text.trim() === '.فحص') {
 *┃  𝑮𝒓𝒐𝒖𝒑 𝑵𝒐𝒘 𝑳𝒐𝒄𝒌𝒆𝒅*
 *╰─━━━━━ 🩸 ━━━━━─╯*
 
-*⚠️ ممنوع إرسال الرسائل هنا ⚠️*
-*إلا للمشرفين فقط..*
+*⚠️ تم سحب إشراف الجميع ⚠️*
+*ممنوع إرسال الرسائل هنا*
+*إلا لعمكم كايدو..*
 *عًمِڪْ ڪْأيِدِوٌ وٌألَأّ 🥀🩸*
                 `;
                 
                 await sock.sendMessage(sender, { text: scaryMessage });
-
                 console.log('✅ تم تنفيذ أمر الزرف بنجاح في:', sender);
 
             } catch (err) {
                 console.error('❌ خطأ في أمر الزرف:', err.message);
-                await sock.sendMessage(sender, { text: '❌ حدث خطأ أثناء تنفيذ الأمر.' }, { quoted: msg });
+                await sock.sendMessage(sender, { text: '❌ حدث خطأ أثناء تنفيذ الأمر، تأكد من صلاحيات البوت.' }, { quoted: msg });
             }
         }
     });
