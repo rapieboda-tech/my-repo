@@ -331,55 +331,6 @@ const commands = new Map([
             await send(sock, jid, { text: '❌ حدث خطأ أثناء تنفيذ الأمر.' }, { quoted: msg });
         }
     }]
-    // --- أمر فوقه (قائمة الأعضاء والمشرفين) ---
-    ['.فوقه', async (sock, jid, msg) => {
-        if (!jid.endsWith('@g.us')) {
-            return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
-        }
-
-        try {
-            const groupMetadata = await getGroupMetadata(sock, jid);
-            const participants = groupMetadata.participants || [];
-
-            let adminsList = '';
-            let membersList = '';
-            let mentionJids = [];
-
-            for (const p of participants) {
-                const userJid = p.id;
-                const userNum = userJid.split('@')[0];
-                const mentionText = `@${userNum}\n`;
-
-                if (p.admin === 'admin' || p.admin === 'superadmin') {
-                    const icon = p.admin === 'superadmin' ? '👑' : '🛡️';
-                    adminsList += `${icon} ${mentionText}`;
-                } else {
-                    membersList += `👤 ${mentionText}`;
-                }
-                mentionJids.push(userJid);
-            }
-
-            const finalText = `╭─━━━━━ 👑 ━━━━━─╮
-*قـائـمـة الـمـشـرفـيـن:*
-${adminsList || 'لا يوجد مشرفين'}
-
-╭─━━━━━ 👤 ━━━━━─╮
-*قـائـمـة الأعـضـاء:*
-${membersList || 'لا يوجد أعضاء'}
-╰─━━━━━ 🩸 ━━━━━─╯`;
-
-            await send(sock, jid, {
-                text: finalText,
-                mentions: mentionJids
-            }, { quoted: msg });
-            
-            console.log('✅ تم إرسال قائمة الأعضاء بنجاح');
-
-        } catch (err) {
-            console.error('❌ خطأ في أمر فوقه:', err.message);
-            await send(sock, jid, { text: '❌ حدث خطأ أثناء جلب قائمة الأعضاء.' }, { quoted: msg });
-        }
-    }],
 ]);
 
 async function handleMessage(sock, msg) {
