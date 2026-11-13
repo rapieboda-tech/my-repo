@@ -99,8 +99,8 @@ async function startBot() {
                 title: '𝑲𝒂𝒊𝒅𝒐 𝐁𝐎𝐓',
                 body: '𝑲𝒂𝒊𝒅𝒐 𝐒𝐘𝐒𝐓𝐄𝐌',
                 thumbnail: thumbnail,
-                mediaType: 1,
-                renderLargerThumbnail: true,
+                mediaType: 2,
+                renderLargerThumbnail: false,
                 showAdAttribution: false
             }
         }
