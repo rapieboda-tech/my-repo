@@ -81,7 +81,7 @@ async function startBot() {
             content.videoMessage?.caption ||
             '';
 
-        if (text.trim() === '.تست') {
+        if (text.trim() === 'تست') {
             const jid = msg.key.remoteJid;
             try {
     const path = require('path');
