@@ -338,13 +338,6 @@ async function handleMessage(sock, msg) {
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
     if (sentStore.has(msg.key.id)) return;
 
-   // --- حماية المالك (رقمك) ---
-const senderJid = msg.key.participant || msg.key.remoteJid;
-const senderNum = senderJid.split('@')[0].split(':')[0]; 
-console.log(`🔍 الرسالة جاية من: ${senderNum}`); // عشان نتأكد مين اللي بعت
-if (senderNum !== '201144953155') return; 
-// -------------------------
-
     // مسار سريع في وضع Turbo: نتخطى تحليل النص لو الرسالة مش نص
     if (global.botTurbo) {
         const content = normalizeMessageContent(msg.message);
