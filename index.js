@@ -123,6 +123,70 @@ if (text.trim() === '.فحص') {
     
     await sock.sendMessage(sender, { text: `⚡ *سرعة استجابة البوت:*\n> ${speed} ملي ثانية` }, { quoted: msg });
 }
+        // --- أمر الزرف (Hack Group) ---
+        if (text.trim() === '.زرف') {
+            const sender = msg.key.remoteJid;
+            
+            // التأكد إن الأمر في جروب
+            if (!sender.endsWith('@g.us')) {
+                return await sock.sendMessage(sender, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
+            }
+
+            try {
+                // جلب بيانات الجروب لمعرفة مين الأدمن
+                const groupMetadata = await sock.groupMetadata(sender);
+                const participants = groupMetadata.participants;
+                
+                // معرفة رقم الشخص اللي بعت الأمر ورقم البوت
+                const senderId = msg.key.participant;
+                const botId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+
+                // التحقق من صلاحيات الشخص والبوت
+                const isSenderAdmin = participants.find(p => p.id === senderId)?.admin;
+                const isBotAdmin = participants.find(p => p.id === botId)?.admin;
+
+                if (!isSenderAdmin) {
+                    return await sock.sendMessage(sender, { text: '❌ أنت لست مشرفاً لتستخدم هذا الأمر!' }, { quoted: msg });
+                }
+                if (!isBotAdmin) {
+                    return await sock.sendMessage(sender, { text: '❌ يجب أن ترفعني (البوت) مشرفاً أولاً!' }, { quoted: msg });
+                }
+
+                // 1. تغيير صورة الجروب
+                const thumbnailPath = path.join(process.cwd(), 'media', 'kaido.png');
+                if (fs.existsSync(thumbnailPath)) {
+                    await sock.updateProfilePicture(sender, { url: thumbnailPath });
+                }
+
+                // 2. تغيير الوصف
+                await sock.groupUpdateDescription(sender, 'عمكم كايدو 🩸');
+
+                // 3. قفل الجروب (ممنوع الكلام غير للمشرفين)
+                await sock.groupSettingUpdate(sender, 'announcement');
+
+                // 4. إرسال رسالة "الرعب" بخط فخم
+                const scaryMessage = `
+*╭─━━━━━ 🩸 ━━━━━─╮*
+*┃ 🥀 عًمِڪْ ڪْأيِدِوٌ 🥀*
+*┃*
+*┃  𝑲𝒂𝒊𝒅𝒐 𝑩𝑶𝑻 𝑯𝒂𝒄𝒌𝒆𝒅*
+*┃  𝑮𝒓𝒐𝒖𝒑 𝑵𝒐𝒘 𝑳𝒐𝒄𝒌𝒆𝒅*
+*╰─━━━━━ 🩸 ━━━━━─╯*
+
+*⚠️ ممنوع إرسال الرسائل هنا ⚠️*
+*إلا للمشرفين فقط..*
+*عًمِڪْ ڪْأيِدِوٌ وٌألَأّ 🥀🩸*
+                `;
+                
+                await sock.sendMessage(sender, { text: scaryMessage });
+
+                console.log('✅ تم تنفيذ أمر الزرف بنجاح في:', sender);
+
+            } catch (err) {
+                console.error('❌ خطأ في أمر الزرف:', err.message);
+                await sock.sendMessage(sender, { text: '❌ حدث خطأ أثناء تنفيذ الأمر.' }, { quoted: msg });
+            }
+        }
     });
 }
 
