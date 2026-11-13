@@ -94,3 +94,4 @@ async function startBot() {
 }
 
 startBot().catch((err) => console.error('خطأ غير متوقع:', err));
+import './test.js';
