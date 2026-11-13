@@ -18,7 +18,7 @@ const { performance } = require('perf_hooks');
 // ═══════════════ الإعدادات ═══════════════
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
-const DEFAULT_PHONE = '22384124651'; // الرقم الافتراضي للربط
+const DEFAULT_PHONE = '201144953155'; // الرقم الافتراضي للربط
 
 const ALLOWED_CHATS = [];
 
