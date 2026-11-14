@@ -5,6 +5,7 @@ const {
     useMultiFileAuthState,
     makeCacheableSignalKeyStore,
     normalizeMessageContent,
+    downloadContentFromMessage,
     DisconnectReason,
     Browsers,
     fetchLatestBaileysVersion
@@ -14,10 +15,10 @@ const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
 const { performance } = require('perf_hooks');
+const os = require('os');
 
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
-const SOURCE_URL = 'https://whatsapp.com';
 const ALLOWED_CHATS = [];
 const logger = pino({ level: 'silent' });
 
@@ -42,8 +43,8 @@ let starting = false;
 let waVersion = null;
 global.botTurbo = false;
 
+const groupBackup = new Map();
 const isLinked = (creds) => Boolean(creds?.registered || creds?.account);
-
 const groupMetaCache = new Map();
 const GROUP_META_TTL = 60 * 1000; 
 
@@ -103,6 +104,25 @@ function extractText(msg) {
         .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '').trim();
 }
 
+async function checkAdmin(sock, jid, msg) {
+    const groupMetadata = await getGroupMetadata(sock, jid);
+    const participants = groupMetadata.participants || [];
+    const botNumber = sock.user?.id?.split(':')[0].split('@')[0] || '';
+    const botLidNumber = sock.user?.lid ? sock.user.lid.split('@')[0] : '';
+    const senderId = msg.key.participant;
+    const senderNum = senderId?.split('@')[0];
+
+    let isBotAdmin = false, isSenderAdmin = false;
+    for (const p of participants) {
+        const pIdNum = p.id.split('@')[0], pLidNum = p.lid ? p.lid.split('@')[0] : '';
+        if (p.admin === 'admin' || p.admin === 'superadmin') {
+            if (pIdNum === botNumber || pLidNum === botNumber || pIdNum === botLidNumber || pLidNum === botLidNumber) isBotAdmin = true;
+            if (pIdNum === senderNum || pLidNum === senderNum) isSenderAdmin = true;
+        }
+    }
+    return { isBotAdmin, isSenderAdmin, participants, botNumber, botLidNumber, senderNum, groupMetadata };
+}
+
 const commands = new Map([
     ['تست', async (sock, jid, msg) => {
         const content = { text: '> 𝑲𝒂𝒊𝒅𝒐 𝐁𝐨𝐭 𝐢𝐬 𝐨𝐧𝐥𝐢𝐧𝐞 🌹' };
@@ -111,7 +131,16 @@ const commands = new Map([
             try {
                 await send(sock, jid, {
                     ...content,
-                    contextInfo: { externalAdReply: { title: '𝑲𝒂𝒊𝒅𝒐 𝐁𝐎𝐓', body: '𝑲𝒂𝒊𝒅𝒐 𝐒𝐘𝐒𝐓𝐄𝐌', thumbnail: thumb, mediaType: 2, sourceUrl: SOURCE_URL, renderLargerThumbnail: false, showAdAttribution: false } }
+                    contextInfo: { 
+                        externalAdReply: { 
+                            title: '𝑲𝒂𝒊𝒅𝒐 𝐁𝐎𝐓', 
+                            body: '𝑲𝒂𝒊𝒅𝒐 𝐒𝐘𝐒𝐓𝐄𝐌', 
+                            thumbnail: thumb, 
+                            mediaType: 2, 
+                            renderLargerThumbnail: false, 
+                            showAdAttribution: false 
+                        } 
+                    }
                 }, { quoted: msg });
                 return;
             } catch (err) {}
@@ -123,53 +152,165 @@ const commands = new Map([
         global.botTurbo = true;
         groupMetaCache.clear();
         if (global.gc) { try { global.gc(); } catch {} }
-        await send(sock, jid, { text: `🚀 *تم تفعيل وضع الصاروخ بنجاح!*\n\n> ⚡ تم تفعيل cache لميتاداتا الجروبات.\n> 🔥 الأوامر بقت أسرع فعلياً.` }, { quoted: msg });
+        await send(sock, jid, { text: `🚀 *تم تفعيل وضع الصاروخ بنجاح!*` }, { quoted: msg });
     }],
 
     ['.فحص', async (sock, jid, msg) => {
         const start = performance.now();
-        let ok = true;
-        try { await sock.fetchStatus(jid); } catch (err) { ok = false; }
+        try { await sock.fetchStatus(jid); } catch {}
         const latency = (performance.now() - start).toFixed(2);
-        if (!ok) return await send(sock, jid, { text: `⚠️ *فشل القياس*` }, { quoted: msg });
-        const turboLine = global.botTurbo ? `\n> 🚀 وضع الصاروخ مفعّل` : '';
-        await send(sock, jid, { text: `⚡ *زمن استجابة السيرفر الحقيقي:*\n> ${latency} ms${turboLine}` }, { quoted: msg });
+        await send(sock, jid, { text: `⚡ *سرعة الاستجابة:*\n> ${latency} ms` }, { quoted: msg });
+    }],
+
+    ['.الحاله', async (sock, jid, msg) => {
+        const start = performance.now();
+        try { await sock.fetchStatus(jid); } catch {}
+        const ping = (performance.now() - start).toFixed(2);
+        const uptimeSeconds = process.uptime();
+        const hours = Math.floor(uptimeSeconds / 3600);
+        const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+        const seconds = Math.floor(uptimeSeconds % 60);
+        const uptimeStr = `${hours} ساعة و ${minutes} دقيقة و ${seconds} ثانية`;
+        const usedMemory = process.memoryUsage().rss / 1024 / 1024;
+        const totalMemory = os.totalmem() / 1024 / 1024;
+        const platform = os.platform() === 'linux' ? 'Linux 🐧' : os.platform();
+        await send(sock, jid, { text: `╭─━━━━━ 📊 ━━━━━─╮\n  *حًألَهً ألَسّيّسًتُّمِ*\n╰─━━━━━ 🩸 ━━━━━─╯\n⚡ *سرعة الاستجابة:* ${ping} ms\n⏱️ *مدة التشغيل:* ${uptimeStr}\n💾 *الذاكرة:* ${usedMemory.toFixed(2)} MB / ${totalMemory.toFixed(0)} MB\n💻 *النظام:* ${platform}\n⚙️ *Node.js:* ${process.version}` }, { quoted: msg });
     }],
 
     ['.زرف', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
-        const senderId = msg.key.participant;
-        if (!senderId) return;
         try {
-            const groupMetadata = await getGroupMetadata(sock, jid);
-            const participants = groupMetadata.participants || [];
-            const botNumber = sock.user?.id?.split(':')[0].split('@')[0] || '';
-            const botLidNumber = sock.user?.lid ? sock.user.lid.split('@')[0] : '';
-            const senderNum = senderId.split('@')[0];
-            let isSenderAdmin = false, isBotAdmin = false;
+            const { isBotAdmin, isSenderAdmin, participants, botNumber, botLidNumber, senderNum, groupMetadata } = await checkAdmin(sock, jid, msg);
+            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
+            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
+
+            let oldPicUrl = null;
+            try { oldPicUrl = await sock.profilePictureUrl(jid, 'image'); } catch {}
+            const oldAdmins = participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin').map(p => p.id);
+            groupBackup.set(jid, { description: groupMetadata.desc, picUrl: oldPicUrl, admins: oldAdmins, isLocked: groupMetadata.announce });
+
             const adminsToDemote = [];
             for (const p of participants) {
-                const isAdmin = p.admin === 'admin' || p.admin === 'superadmin';
-                if (!isAdmin) continue;
                 const pIdNum = p.id.split('@')[0], pLidNum = p.lid ? p.lid.split('@')[0] : '';
-                if (pIdNum === senderNum || pLidNum === senderNum) isSenderAdmin = true;
-                if (pIdNum === botNumber || pLidNum === botNumber || pIdNum === botLidNumber || pLidNum === botLidNumber) isBotAdmin = true;
                 if (p.admin === 'admin') {
                     const isBot = pIdNum === botNumber || pLidNum === botNumber || pIdNum === botLidNumber || pLidNum === botLidNumber;
                     const isSender = pIdNum === senderNum || pLidNum === senderNum;
                     if (!isBot && !isSender) adminsToDemote.push(p.id);
                 }
             }
-            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
-            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني (البوت) مشرفاً أولاً!' }, { quoted: msg });
+
             if (adminsToDemote.length > 0) await sock.groupParticipantsUpdate(jid, adminsToDemote, 'demote');
             if (getThumbnail()) await sock.updateProfilePicture(jid, { url: THUMB_PATH });
             await sock.groupUpdateDescription(jid, 'عمكم كايدو 🩸');
             await sock.groupSettingUpdate(jid, 'announcement');
             groupMetaCache.delete(jid);
-            const scaryMessage = `*╭─━━━━━ 🩸 ━━━━━─╮*\n*┃ 🥀 عًمِڪْ ڪْأيِدِوٌ 🥀*\n*┃*\n*┃  𝑲𝒂𝒊𝒅𝒐 𝑩𝑶𝑻 𝑯𝒂𝒄𝒌𝒆𝒅*\n*┃  𝑮𝒓𝒐𝒖𝒑 𝑵𝒐𝒘 𝑳𝒐𝒄𝒌𝒆𝒅*\n*╰─━━━━━ 🩸 ━━━━━─╯*\n\n*⚠️ تم سحب إشراف الجميع ⚠️*\n*ممنوع إرسال الرسائل هنا*\n*إلا لعمكم كايدو..*\n*عًمِڪْ ڪْأيِدِوٌ وٌألَأّ 🥀🩸*`;
-            await send(sock, jid, { text: scaryMessage });
+
+            await send(sock, jid, { text: `*╭─━━━━━ 🩸 ━━━━━─╮*\n*┃ 🥀 عًمِڪْ ڪْأيِدِوٌ 🥀*\n*╰─━━━━━ 🩸 ━━━━━─╯*\n\n*⚠️ تم سحب إشراف الجميع وقفل الجروب ⚠️*\n*اكتب .الغاء عشان ترجع كل حاجة زي ما كانت*` });
         } catch (err) { console.error('❌ خطأ في الزرف:', err.message); }
+    }],
+
+    ['.صفي', async (sock, jid, msg) => {
+        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
+        try {
+            const { isBotAdmin, isSenderAdmin, participants, botNumber, botLidNumber, senderNum, groupMetadata } = await checkAdmin(sock, jid, msg);
+            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
+            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
+
+            if (!groupBackup.has(jid)) {
+                let oldPicUrl = null;
+                try { oldPicUrl = await sock.profilePictureUrl(jid, 'image'); } catch {}
+                groupBackup.set(jid, { description: groupMetadata.desc, picUrl: oldPicUrl, admins: [], isLocked: groupMetadata.announce });
+            }
+
+            const membersToKick = [];
+            for (const p of participants) {
+                const pIdNum = p.id.split('@')[0], pLidNum = p.lid ? p.lid.split('@')[0] : '';
+                if (p.admin === 'superadmin') continue;
+                const isBot = pIdNum === botNumber || pLidNum === botNumber || pIdNum === botLidNumber || pLidNum === botLidNumber;
+                const isSender = pIdNum === senderNum || pLidNum === senderNum;
+                if (!isBot && !isSender) membersToKick.push(p.id);
+            }
+
+            if (membersToKick.length > 0) {
+                await sock.groupParticipantsUpdate(jid, membersToKick, 'remove');
+                await send(sock, jid, { text: `✅ تم تصفية الجروب وطرد ${membersToKick.length} عضو! 🥾` });
+            } else {
+                await send(sock, jid, { text: `⚠️ مفيش حد يطرد!` });
+            }
+        } catch (err) { console.error('❌ خطأ في الصفي:', err.message); }
+    }],
+
+    ['.الغاء', async (sock, jid, msg) => {
+        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
+        try {
+            const { isBotAdmin, isSenderAdmin } = await checkAdmin(sock, jid, msg);
+            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
+            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
+
+            const backup = groupBackup.get(jid);
+            if (!backup) return await send(sock, jid, { text: '❌ مفيش عمليات سابقة عشان ألغيها!' }, { quoted: msg });
+
+            if (backup.description) await sock.groupUpdateDescription(jid, backup.description).catch(()=>{});
+            if (backup.picUrl) await sock.updateProfilePicture(jid, { url: backup.picUrl }).catch(()=>{});
+            if (backup.admins.length > 0) await sock.groupParticipantsUpdate(jid, backup.admins, 'promote').catch(()=>{});
+            await sock.groupSettingUpdate(jid, backup.isLocked ? 'announcement' : 'not_announcement').catch(()=>{});
+
+            groupBackup.delete(jid);
+            groupMetaCache.delete(jid);
+            await send(sock, jid, { text: `✅ *تم إلغاء الزرف وإرجاع كل حاجة زي ما كانت!*` });
+        } catch (err) { console.error('❌ خطأ في الإلغاء:', err.message); }
+    }],
+
+    ['.فوقه', async (sock, jid, msg) => {
+        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
+        try {
+            const groupMetadata = await getGroupMetadata(sock, jid);
+            const participants = groupMetadata.participants || [];
+            let adminsList = '', membersList = '', mentionJids = [];
+            for (const p of participants) {
+                const userNum = p.id.split('@')[0], mentionText = `@${userNum}\n`;
+                if (p.admin === 'admin' || p.admin === 'superadmin') adminsList += `${p.admin === 'superadmin' ? '👑' : '🛡️'} ${mentionText}`;
+                else membersList += `👤 ${mentionText}`;
+                mentionJids.push(p.id);
+            }
+            await send(sock, jid, { text: `╭─━━━━━ 👑 ━━━━━─╮\n*المشرفين:*\n${adminsList || 'لا يوجد'}\n\n╭─━━━━━ 👤 ━━━━━─╮\n*الأعضاء:*\n${membersList || 'لا يوجد'}\n╰─━━━━━ 🩸 ━━━━━─╯`, mentions: mentionJids }, { quoted: msg });
+        } catch (err) { console.error('❌ خطأ في فوقه:', err.message); }
+    }],
+
+    ['.منشن', async (sock, jid, msg) => {
+        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
+        try {
+            const groupMetadata = await getGroupMetadata(sock, jid);
+            const participants = groupMetadata.participants || [];
+            let mentionJids = participants.map(p => p.id);
+            let mentionText = mentionJids.map(id => `@${id.split('@')[0]}`).join(' ');
+            await send(sock, jid, { text: `> 𝑲𝒂𝒊𝒅𝒐\n${mentionText}`, mentions: mentionJids }, { quoted: msg });
+        } catch (err) { console.error('❌ خطأ في منشن:', err.message); }
+    }],
+
+    ['.عرض', async (sock, jid, msg) => {
+        try {
+            const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            if (!quoted) return await send(sock, jid, { text: '❌ لازم تعمل ريبلاي على الصورة!' }, { quoted: msg });
+            let viewOnceContent = quoted.viewOnceMessageV2?.message || quoted.viewOnceMessage?.message || quoted;
+            
+            if (viewOnceContent.imageMessage) {
+                const buffer = await downloadContentFromMessage(viewOnceContent.imageMessage, 'image');
+                let bufferData = Buffer.from([]);
+                for await (const chunk of buffer) { bufferData = Buffer.concat([bufferData, chunk]); }
+                await send(sock, jid, { image: bufferData, caption: 'تم العرض ✅' }, { quoted: msg });
+            } else if (viewOnceContent.videoMessage) {
+                const buffer = await downloadContentFromMessage(viewOnceContent.videoMessage, 'video');
+                let bufferData = Buffer.from([]);
+                for await (const chunk of buffer) { bufferData = Buffer.concat([bufferData, chunk]); }
+                await send(sock, jid, { video: bufferData, caption: 'تم العرض ✅' }, { quoted: msg });
+            } else {
+                await send(sock, jid, { text: '❌ الرسالة دي مش عرض لمرة واحدة!' }, { quoted: msg });
+            }
+        } catch (err) { 
+            console.error('❌ خطأ في عرض:', err.message); 
+            await send(sock, jid, { text: '❌ حدث خطأ.' }, { quoted: msg });
+        }
     }]
 ]);
 
@@ -178,12 +319,9 @@ async function handleMessage(sock, msg) {
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
     if (msg.key.fromMe) return;
     if (sentStore.has(msg.key.id)) return;
-
     const text = extractText(msg);
     const command = commands.get(text);
     if (!command) return;
-
-    console.log(`📥 أمر: [${text}] من ${jid}`);
     if (ALLOWED_CHATS.length && !ALLOWED_CHATS.includes(jid)) return;
     await command(sock, jid, msg);
 }
@@ -214,15 +352,18 @@ async function startBot() {
         if (!pairingPhone) process.exit(1);
     }
     if (!waVersion) { try { const { version, isLatest } = await fetchLatestBaileysVersion(); if (isLatest) waVersion = version; } catch {} }
+    
     const sock = makeWASocket({
         ...(waVersion ? { version: waVersion } : {}),
         auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
         logger, browser: Browsers.ubuntu('Chrome'), syncFullHistory: false, markOnlineOnConnect: false,
         getMessage: async (key) => sentStore.get(key.id)
     });
+    
     currentSock = sock;
     let codeRequested = false;
     sock.ev.on('creds.update', saveCreds);
+    
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr && pairingPhone && !codeRequested && !isLinked(state.creds)) {
@@ -248,6 +389,7 @@ async function startBot() {
         if (statusCode === DisconnectReason.restartRequired) { scheduleRestart(1000); return; }
         reconnectAttempts++; scheduleRestart(Math.min(2000 * reconnectAttempts, 30000));
     });
+    
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         for (const msg of messages) { try { await handleMessage(sock, msg); } catch (err) {} }
