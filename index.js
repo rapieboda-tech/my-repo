@@ -317,11 +317,14 @@ const commands = new Map([
 async function handleMessage(sock, msg) {
     const jid = msg?.key?.remoteJid;
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
-    if (msg.key.fromMe) return;
+    
+    // منع البوت من الرد على رسائله اللي هو بعتها (عشان ميعملش لوب)
     if (sentStore.has(msg.key.id)) return;
+
     const text = extractText(msg);
     const command = commands.get(text);
     if (!command) return;
+
     if (ALLOWED_CHATS.length && !ALLOWED_CHATS.includes(jid)) return;
     await command(sock, jid, msg);
 }
