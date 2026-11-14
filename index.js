@@ -104,23 +104,37 @@ function extractText(msg) {
         .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '').trim();
 }
 
+// ═══════════════ دالة الفحص الذكية (السر في حل مشكلة الإشراف) ═══════════════
 async function checkAdmin(sock, jid, msg) {
     const groupMetadata = await getGroupMetadata(sock, jid);
     const participants = groupMetadata.participants || [];
-    const botNumber = sock.user?.id?.split(':')[0].split('@')[0] || '';
-    const botLidNumber = sock.user?.lid ? sock.user.lid.split('@')[0] : '';
-    const senderId = msg.key.participant;
-    const senderNum = senderId?.split('@')[0];
+    
+    // بنجمع كل أشكال ID البوت عشان نضمن نلاقيه
+    const botIds = [
+        sock.user?.id,
+        sock.user?.lid,
+        sock.authState?.creds?.me?.id,
+        sock.authState?.creds?.me?.lid
+    ].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
+
+    // بنجمع كل أشكال ID اللي بعت الأمر
+    const senderIds = [
+        msg.key.participant,
+        msg.key.participantAlt
+    ].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
 
     let isBotAdmin = false, isSenderAdmin = false;
+
     for (const p of participants) {
-        const pIdNum = p.id.split('@')[0], pLidNum = p.lid ? p.lid.split('@')[0] : '';
+        // بنجمع كل أشكال ID العضو الحالي (رقمه، الـ lid بتاعه، أو رقم الموبايل)
+        const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
+        
         if (p.admin === 'admin' || p.admin === 'superadmin') {
-            if (pIdNum === botNumber || pLidNum === botNumber || pIdNum === botLidNumber || pLidNum === botLidNumber) isBotAdmin = true;
-            if (pIdNum === senderNum || pLidNum === senderNum) isSenderAdmin = true;
+            if (pIds.some(id => botIds.includes(id))) isBotAdmin = true;
+            if (senderIds.length > 0 && pIds.some(id => senderIds.includes(id))) isSenderAdmin = true;
         }
     }
-    return { isBotAdmin, isSenderAdmin, participants, botNumber, botLidNumber, senderNum, groupMetadata };
+    return { isBotAdmin, isSenderAdmin, participants, botIds, senderIds, groupMetadata };
 }
 
 const commands = new Map([
@@ -180,21 +194,25 @@ const commands = new Map([
     ['.زرف', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
-            const { isBotAdmin, isSenderAdmin, participants, botNumber, botLidNumber, senderNum, groupMetadata } = await checkAdmin(sock, jid, msg);
-            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
-            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
+            const { isBotAdmin, isSenderAdmin, participants, botIds, senderIds, groupMetadata } = await checkAdmin(sock, jid, msg);
+            
+            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً لتستخدم هذا الأمر!' }, { quoted: msg });
+            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني (البوت) مشرفاً أولاً!' }, { quoted: msg });
 
+            // حفظ نسخة احتياطية
             let oldPicUrl = null;
             try { oldPicUrl = await sock.profilePictureUrl(jid, 'image'); } catch {}
             const oldAdmins = participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin').map(p => p.id);
             groupBackup.set(jid, { description: groupMetadata.desc, picUrl: oldPicUrl, admins: oldAdmins, isLocked: groupMetadata.announce });
 
+            // سحب إشراف المشرفين العاديين
             const adminsToDemote = [];
             for (const p of participants) {
-                const pIdNum = p.id.split('@')[0], pLidNum = p.lid ? p.lid.split('@')[0] : '';
                 if (p.admin === 'admin') {
-                    const isBot = pIdNum === botNumber || pLidNum === botNumber || pIdNum === botLidNumber || pLidNum === botLidNumber;
-                    const isSender = pIdNum === senderNum || pLidNum === senderNum;
+                    const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
+                    const isBot = pIds.some(id => botIds.includes(id));
+                    const isSender = pIds.some(id => senderIds.includes(id));
+                    
                     if (!isBot && !isSender) adminsToDemote.push(p.id);
                 }
             }
@@ -212,9 +230,10 @@ const commands = new Map([
     ['.صفي', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
-            const { isBotAdmin, isSenderAdmin, participants, botNumber, botLidNumber, senderNum, groupMetadata } = await checkAdmin(sock, jid, msg);
-            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
-            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
+            const { isBotAdmin, isSenderAdmin, participants, botIds, senderIds, groupMetadata } = await checkAdmin(sock, jid, msg);
+            
+            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً لتستخدم هذا الأمر!' }, { quoted: msg });
+            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني (البوت) مشرفاً أولاً!' }, { quoted: msg });
 
             if (!groupBackup.has(jid)) {
                 let oldPicUrl = null;
@@ -224,10 +243,12 @@ const commands = new Map([
 
             const membersToKick = [];
             for (const p of participants) {
-                const pIdNum = p.id.split('@')[0], pLidNum = p.lid ? p.lid.split('@')[0] : '';
-                if (p.admin === 'superadmin') continue;
-                const isBot = pIdNum === botNumber || pLidNum === botNumber || pIdNum === botLidNumber || pLidNum === botLidNumber;
-                const isSender = pIdNum === senderNum || pLidNum === senderNum;
+                if (p.admin === 'superadmin') continue; // صاحب الجروب
+                
+                const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
+                const isBot = pIds.some(id => botIds.includes(id));
+                const isSender = pIds.some(id => senderIds.includes(id));
+                
                 if (!isBot && !isSender) membersToKick.push(p.id);
             }
 
@@ -317,8 +338,6 @@ const commands = new Map([
 async function handleMessage(sock, msg) {
     const jid = msg?.key?.remoteJid;
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
-    
-    // منع البوت من الرد على رسائله اللي هو بعتها (عشان ميعملش لوب)
     if (sentStore.has(msg.key.id)) return;
 
     const text = extractText(msg);
