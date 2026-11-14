@@ -125,6 +125,24 @@ async function checkAdmin(sock, jid, msg) {
     return { isBotAdmin, isSenderAdmin, participants, botIds, senderIds, groupMetadata };
 }
 
+// دالة مساعدة لاستخراج الشخص المستهدف (منشن أو ريبلاي)
+function getTarget(msg, participants) {
+    const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
+    const mentionedJid = contextInfo?.mentionedJid || [];
+    const quotedParticipant = contextInfo?.participant;
+    let targetJid = mentionedJid[0] || quotedParticipant;
+    
+    if (!targetJid) return null;
+    
+    const targetNum = targetJid.split('@')[0].split(':')[0];
+    const targetParticipant = participants.find(p => {
+        const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
+        return pIds.includes(targetNum);
+    });
+    
+    return targetParticipant ? targetParticipant : { id: targetJid, admin: null };
+}
+
 const commands = new Map([
     ['تست', async (sock, jid, msg) => {
         const content = { text: '> 𝑲𝒂𝒊𝒅𝒐 𝐁𝐨𝐭 𝐢𝐬 𝐨𝐧𝐥𝐢𝐧𝐞 🌹' };
@@ -179,6 +197,71 @@ const commands = new Map([
         await send(sock, jid, { text: `╭─━━━━━ 📊 ━━━━━─╮\n  *حًألَهً ألَسّيّسًتُّمِ*\n╰─━━━━━ 🩸 ━━━━━─╯\n⚡ *سرعة الاستجابة:* ${ping} ms\n⏱️ *مدة التشغيل:* ${uptimeStr}\n💾 *الذاكرة:* ${usedMemory.toFixed(2)} MB / ${totalMemory.toFixed(0)} MB\n💻 *النظام:* ${platform}\n⚙️ *Node.js:* ${process.version}` }, { quoted: msg });
     }],
 
+    ['.فتح', async (sock, jid, msg) => {
+        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
+        try {
+            const { isBotAdmin, isSenderAdmin, groupMetadata } = await checkAdmin(sock, jid, msg);
+            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
+            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
+            if (!groupMetadata.announce) return await send(sock, jid, { text: '⚠️ الجروب مفتوح بالفعل!' }, { quoted: msg });
+
+            await sock.groupSettingUpdate(jid, 'not_announcement');
+            await send(sock, jid, { text: '✅ *تم فتح الجروب بنجاح!* 🔓' });
+            groupMetaCache.delete(jid);
+        } catch (err) { console.error('❌ خطأ في فتح:', err.message); }
+    }],
+
+    ['.قفل', async (sock, jid, msg) => {
+        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
+        try {
+            const { isBotAdmin, isSenderAdmin, groupMetadata } = await checkAdmin(sock, jid, msg);
+            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
+            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
+            if (groupMetadata.announce) return await send(sock, jid, { text: '⚠️ الجروب مقفول بالفعل!' }, { quoted: msg });
+
+            await sock.groupSettingUpdate(jid, 'announcement');
+            await send(sock, jid, { text: '✅ *تم قفل الجروب بنجاح!* 🔒' });
+            groupMetaCache.delete(jid);
+        } catch (err) { console.error('❌ خطأ في قفل:', err.message); }
+    }],
+
+    ['.سحب', async (sock, jid, msg) => {
+        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
+        try {
+            const { isBotAdmin, isSenderAdmin, participants } = await checkAdmin(sock, jid, msg);
+            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
+            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
+
+            const target = getTarget(msg, participants);
+            if (!target) return await send(sock, jid, { text: '❌ لازم تعمل منشن أو ريبلاي على الشخص!' }, { quoted: msg });
+            
+            if (target.admin === 'superadmin') return await send(sock, jid, { text: '❌ لا يمكنني سحب إشراف صاحب الجروب!' }, { quoted: msg });
+            if (target.admin !== 'admin') return await send(sock, jid, { text: '⚠️ هذا الشخص ليس مشرفاً بالأساس!' }, { quoted: msg });
+
+            await sock.groupParticipantsUpdate(jid, [target.id], 'demote');
+            await send(sock, jid, { text: 'ههههههه انطر 😂🥾' });
+            groupMetaCache.delete(jid);
+        } catch (err) { console.error('❌ خطأ في سحب:', err.message); }
+    }],
+
+    ['.إضافة', async (sock, jid, msg) => {
+        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
+        try {
+            const { isBotAdmin, isSenderAdmin, participants } = await checkAdmin(sock, jid, msg);
+            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
+            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
+
+            const target = getTarget(msg, participants);
+            if (!target) return await send(sock, jid, { text: '❌ لازم تعمل منشن أو ريبلاي على الشخص!' }, { quoted: msg });
+            
+            if (target.admin === 'admin' || target.admin === 'superadmin') return await send(sock, jid, { text: '⚠️ هذا الشخص مشرف بالفعل!' }, { quoted: msg });
+
+            await sock.groupParticipantsUpdate(jid, [target.id], 'promote');
+            await send(sock, jid, { text: 'باااااامو يبن الملك باااامو يلاااااا 👑🔥' });
+            groupMetaCache.delete(jid);
+        } catch (err) { console.error('❌ خطأ في إضافة:', err.message); }
+    }],
+
     ['.زرف', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
@@ -208,9 +291,7 @@ const commands = new Map([
             await sock.groupSettingUpdate(jid, 'announcement');
             groupMetaCache.delete(jid);
 
-            // ═══════════════ الرسالة اللي طلبتها بالظبط ═══════════════
             await send(sock, jid, { text: `*كايدو عمك 🩸*` });
-            
         } catch (err) { console.error('❌ خطأ في الزرف:', err.message); }
     }],
 
