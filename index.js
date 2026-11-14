@@ -6,10 +6,10 @@ const {
     makeCacheableSignalKeyStore,
     normalizeMessageContent,
     downloadContentFromMessage,
-    downloadMediaMessage,
     DisconnectReason,
     Browsers,
-    fetchLatestBaileysVersion
+    fetchLatestBaileysVersion,
+    makeInMemoryStore
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const path = require('path');
@@ -22,6 +22,21 @@ const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
 const ALLOWED_CHATS = [];
 const logger = pino({ level: 'silent' });
+
+// ═══════════════ الذاكرة المؤقتة للرسائل ═══════════════
+const store = makeInMemoryStore({ logger });
+
+// تنظيف الذاكرة المؤقتة كل 10 دقايق عشان متملاش الرامات
+setInterval(() => {
+    if (store.messages) {
+        for (const jid in store.messages) {
+            if (store.messages[jid].length > 30) {
+                store.messages[jid] = store.messages[jid].slice(-30); // بنسيب آخر 30 رسالة بس
+            }
+        }
+    }
+}, 10 * 60 * 1000);
+// ═══════════════════════════════════════════════════════
 
 let thumbnail = undefined;
 function getThumbnail() {
@@ -414,59 +429,46 @@ const commands = new Map([
     }],
     // ═════════════════════════════════════════════════════════════════════════
 
-    // ═══════════════ أمر العرض (باستخدام downloadMediaMessage مع طباعة الخطأ) ═══════════════
+    // ═══════════════ أمر العرض (باستخدام الذاكرة المؤقتة) ═══════════════
     ['.عرض', async (sock, jid, msg) => {
         try {
-            const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.imageMessage?.contextInfo || msg.message?.videoMessage?.contextInfo;
-            const quoted = contextInfo?.quotedMessage;
-            
-            if (!quoted) return await send(sock, jid, { text: '❌ لازم تعمل ريبلاي على الرسالة اللي فيها عرض لمرة واحدة!' }, { quoted: msg });
+            const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
+            if (!contextInfo) return await send(sock, jid, { text: '❌ لازم تعمل ريبلاي على الرسالة!' }, { quoted: msg });
 
-            const normalizedQuoted = normalizeMessageContent(quoted);
+            const stanzaId = contextInfo.stanzaId;
+            const quoted = contextInfo.quotedMessage;
+
+            // بنحاول نجيب الرسالة الأصلية من الذاكرة المؤقتة
+            let originalMessage = await store.loadMessage(jid, stanzaId);
+            let msgToProcess = originalMessage ? originalMessage.message : quoted;
+
+            const normalizedQuoted = normalizeMessageContent(msgToProcess);
             
             let mediaType = null;
-            if (normalizedQuoted?.imageMessage) mediaType = 'image';
-            else if (normalizedQuoted?.videoMessage) mediaType = 'video';
-            else if (normalizedQuoted?.audioMessage) mediaType = 'audio';
+            let mediaMsg = null;
+
+            if (normalizedQuoted?.imageMessage) { mediaType = 'image'; mediaMsg = normalizedQuoted.imageMessage; }
+            else if (normalizedQuoted?.videoMessage) { mediaType = 'video'; mediaMsg = normalizedQuoted.videoMessage; }
+            else if (normalizedQuoted?.audioMessage) { mediaType = 'audio'; mediaMsg = normalizedQuoted.audioMessage; }
             
             if (!mediaType) {
                 return await send(sock, jid, { text: '❌ الرسالة دي مش عرض لمرة واحدة (صورة/فيديو/فويش)!' }, { quoted: msg });
             }
 
-            // بناء الرسالة الوهمية بالـ IDs الصح
-            const targetMsg = {
-                key: {
-                    remoteJid: jid,
-                    fromMe: false,
-                    id: contextInfo.stanzaId,
-                    participant: contextInfo.participant || jid
-                },
-                message: quoted
-            };
-
-            let buffer;
-            try {
-                buffer = await downloadMediaMessage(targetMsg, 'buffer', { }, { logger, reuploadRequest: sock.updateMediaMessage });
-            } catch (e) {
-                // لو الطريقة الأولى فشلت، نجرب الطريقة التانية
-                const mediaMsg = normalizedQuoted[mediaType + 'Message'];
-                const stream = await downloadContentFromMessage(mediaMsg, mediaType);
-                let bufferData = Buffer.from([]);
-                for await (const chunk of stream) { bufferData = Buffer.concat([bufferData, chunk]); }
-                buffer = bufferData;
-            }
+            const stream = await downloadContentFromMessage(mediaMsg, mediaType);
+            let bufferData = Buffer.from([]);
+            for await (const chunk of stream) { bufferData = Buffer.concat([bufferData, chunk]); }
 
             if (mediaType === 'image') {
-                await send(sock, jid, { image: buffer, caption: 'تم العرض ✅' }, { quoted: msg });
+                await send(sock, jid, { image: bufferData, caption: 'تم العرض ✅' }, { quoted: msg });
             } else if (mediaType === 'video') {
-                await send(sock, jid, { video: buffer, caption: 'تم العرض ✅' }, { quoted: msg });
+                await send(sock, jid, { video: bufferData, caption: 'تم العرض ✅' }, { quoted: msg });
             } else if (mediaType === 'audio') {
-                await send(sock, jid, { audio: buffer, mimetype: normalizedQuoted.audioMessage.mimetype || 'audio/mp4', ptt: normalizedQuoted.audioMessage.ptt || false }, { quoted: msg });
+                await send(sock, jid, { audio: bufferData, mimetype: mediaMsg.mimetype || 'audio/mp4', ptt: mediaMsg.ptt || false }, { quoted: msg });
             }
 
         } catch (err) { 
             console.error('❌ خطأ في عرض:', err.message); 
-            // هنا بنبعتلك الخطأ الحقيقي اللي جاي من واتساب
             await send(sock, jid, { text: `❌ فشل التحميل.\nالسبب: ${err.message}` }, { quoted: msg });
         }
     }]
@@ -525,6 +527,9 @@ async function startBot() {
         logger, browser: Browsers.ubuntu('Chrome'), syncFullHistory: false, markOnlineOnConnect: false,
         getMessage: async (key) => sentStore.get(key.id)
     });
+
+    // ربط الذاكرة المؤقتة بالسوكيت
+    store.bind(sock.ev);
     
     currentSock = sock;
     let codeRequested = false;
