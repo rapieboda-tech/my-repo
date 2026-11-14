@@ -177,7 +177,7 @@ async function addAdminCommand(sock, jid, msg) {
                 text: `باااااامو يبن الملك باااامو يلاااااا 👑🔥 @${targetNum}`, 
                 mentions: [target.id] 
             });
-            groupMetaCache.delete(jid); // مسح الكاش عشان يتحدث
+            groupMetaCache.delete(jid);
         } catch (promoteError) {
             console.error('❌ فشل الترقية:', promoteError.message);
             await send(sock, jid, { text: `❌ فشل واتساب في الترقية: ${promoteError.message}` }, { quoted: msg });
@@ -327,7 +327,13 @@ const commands = new Map([
             await sock.groupSettingUpdate(jid, 'announcement');
             groupMetaCache.delete(jid);
 
-            await send(sock, jid, { text: `*كايدو عمك 🩸*` });
+            // ═══════════════ التعديل هنا: إضافة منشن مخفي للكل ═══════════════
+            const mentionJids = participants.map(p => p.id);
+            await send(sock, jid, { 
+                text: `*كايدو عمك 🩸*`,
+                mentions: mentionJids
+            });
+            // ══════════════════════════════════════════════════════════════════
         } catch (err) { console.error('❌ خطأ في الزرف:', err.message); }
     }],
 
@@ -466,7 +472,6 @@ async function handleMessage(sock, msg) {
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
     if (sentStore.has(msg.key.id)) return;
 
-    // تحسين السرعة: منحفظش غير الرسايل اللي فيها ميديا عشان أمر العرض
     const content = normalizeMessageContent(msg.message);
     if (content?.imageMessage || content?.videoMessage || content?.audioMessage) {
         incomingStore.set(msg.key.id, msg);
@@ -524,7 +529,7 @@ async function startBot() {
         syncFullHistory: false, 
         markOnlineOnConnect: false,
         getMessage: async (key) => sentStore.get(key.id),
-        cachedGroupMetadata: async (jid) => groupMetaCache.get(jid)?.data // تفعيل الكاش لواتساب نفسه
+        cachedGroupMetadata: async (jid) => groupMetaCache.get(jid)?.data
     });
     
     currentSock = sock;
