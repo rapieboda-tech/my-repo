@@ -85,6 +85,7 @@ function ask(question) {
 }
 
 async function getPhoneNumber() {
+    // ═══════════════ الرقم مربوط هنا ═══════════════
     const preset = normalizePhone(process.env.PHONE_NUMBER || process.argv[2] || '201144953155');
     if (preset) return preset;
     if (!process.stdin.isTTY) return null;
@@ -104,31 +105,19 @@ function extractText(msg) {
         .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '').trim();
 }
 
-// ═══════════════ دالة الفحص الذكية (السر في حل مشكلة الإشراف) ═══════════════
 async function checkAdmin(sock, jid, msg) {
     const groupMetadata = await getGroupMetadata(sock, jid);
     const participants = groupMetadata.participants || [];
-    
-    // بنجمع كل أشكال ID البوت عشان نضمن نلاقيه
     const botIds = [
-        sock.user?.id,
-        sock.user?.lid,
-        sock.authState?.creds?.me?.id,
-        sock.authState?.creds?.me?.lid
+        sock.user?.id, sock.user?.lid,
+        sock.authState?.creds?.me?.id, sock.authState?.creds?.me?.lid
     ].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
 
-    // بنجمع كل أشكال ID اللي بعت الأمر
-    const senderIds = [
-        msg.key.participant,
-        msg.key.participantAlt
-    ].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
-
+    const senderIds = [msg.key.participant, msg.key.participantAlt].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
     let isBotAdmin = false, isSenderAdmin = false;
 
     for (const p of participants) {
-        // بنجمع كل أشكال ID العضو الحالي (رقمه، الـ lid بتاعه، أو رقم الموبايل)
         const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
-        
         if (p.admin === 'admin' || p.admin === 'superadmin') {
             if (pIds.some(id => botIds.includes(id))) isBotAdmin = true;
             if (senderIds.length > 0 && pIds.some(id => senderIds.includes(id))) isSenderAdmin = true;
@@ -195,24 +184,20 @@ const commands = new Map([
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
             const { isBotAdmin, isSenderAdmin, participants, botIds, senderIds, groupMetadata } = await checkAdmin(sock, jid, msg);
-            
             if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً لتستخدم هذا الأمر!' }, { quoted: msg });
             if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني (البوت) مشرفاً أولاً!' }, { quoted: msg });
 
-            // حفظ نسخة احتياطية
             let oldPicUrl = null;
             try { oldPicUrl = await sock.profilePictureUrl(jid, 'image'); } catch {}
             const oldAdmins = participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin').map(p => p.id);
             groupBackup.set(jid, { description: groupMetadata.desc, picUrl: oldPicUrl, admins: oldAdmins, isLocked: groupMetadata.announce });
 
-            // سحب إشراف المشرفين العاديين
             const adminsToDemote = [];
             for (const p of participants) {
                 if (p.admin === 'admin') {
                     const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
                     const isBot = pIds.some(id => botIds.includes(id));
                     const isSender = pIds.some(id => senderIds.includes(id));
-                    
                     if (!isBot && !isSender) adminsToDemote.push(p.id);
                 }
             }
@@ -231,7 +216,6 @@ const commands = new Map([
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
             const { isBotAdmin, isSenderAdmin, participants, botIds, senderIds, groupMetadata } = await checkAdmin(sock, jid, msg);
-            
             if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً لتستخدم هذا الأمر!' }, { quoted: msg });
             if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني (البوت) مشرفاً أولاً!' }, { quoted: msg });
 
@@ -243,12 +227,10 @@ const commands = new Map([
 
             const membersToKick = [];
             for (const p of participants) {
-                if (p.admin === 'superadmin') continue; // صاحب الجروب
-                
+                if (p.admin === 'superadmin') continue;
                 const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
                 const isBot = pIds.some(id => botIds.includes(id));
                 const isSender = pIds.some(id => senderIds.includes(id));
-                
                 if (!isBot && !isSender) membersToKick.push(p.id);
             }
 
@@ -301,12 +283,19 @@ const commands = new Map([
     ['.منشن', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
+            await send(sock, jid, { 
+                text: `> 𝑲𝒂𝒊𝒅𝒐`, 
+                contextInfo: { 
+                    groupMentions: [{ groupJid: jid, groupSubject: 'everyone' }] 
+                } 
+            }, { quoted: msg });
+        } catch (err) { 
             const groupMetadata = await getGroupMetadata(sock, jid);
             const participants = groupMetadata.participants || [];
             let mentionJids = participants.map(p => p.id);
             let mentionText = mentionJids.map(id => `@${id.split('@')[0]}`).join(' ');
             await send(sock, jid, { text: `> 𝑲𝒂𝒊𝒅𝒐\n${mentionText}`, mentions: mentionJids }, { quoted: msg });
-        } catch (err) { console.error('❌ خطأ في منشن:', err.message); }
+        }
     }],
 
     ['.عرض', async (sock, jid, msg) => {
