@@ -97,12 +97,25 @@ async function getPhoneNumber() {
     return null;
 }
 
+// ═══════════════ السر هنا: الفلتر الذكي للنصوص العربية ═══════════════
 function extractText(msg) {
     const content = normalizeMessageContent(msg?.message);
     if (!content) return '';
-    return String(content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || content.videoMessage?.caption || '')
-        .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '').trim();
+    
+    let text = String(content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || content.videoMessage?.caption || '');
+    
+    // 1. إزالة الحروف المخفية
+    text = text.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '');
+    
+    // 2. توحيد الحروف العربية (عشان يقراها صح مهما كتبتها)
+    text = text.replace(/[إأآا]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي');
+    
+    // 3. إزالة أي مسافة بعد النقطة (لو كتبت . إضافة)
+    text = text.replace(/^\.\s*/, '.');
+    
+    return text.trim();
 }
+// ═══════════════════════════════════════════════════════════════════════
 
 async function checkAdmin(sock, jid, msg) {
     const groupMetadata = await getGroupMetadata(sock, jid);
@@ -145,7 +158,7 @@ function getTarget(msg, participants) {
     return { id: targetJid, admin: null };
 }
 
-// دالة موحدة لأمر الإضافة عشان منكررش الكود ونضمن إنه شغال
+// دالة موحدة لأمر الإضافة
 async function addAdminCommand(sock, jid, msg) {
     if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
     try {
@@ -158,12 +171,18 @@ async function addAdminCommand(sock, jid, msg) {
         
         if (target.admin === 'admin' || target.admin === 'superadmin') return await send(sock, jid, { text: '⚠️ هذا الشخص مشرف بالفعل!' }, { quoted: msg });
 
-        await sock.groupParticipantsUpdate(jid, [target.id], 'promote');
-        await send(sock, jid, { text: 'باااااامو يبن الملك باااامو يلاااااا 👑🔥' });
-        groupMetaCache.delete(jid);
+        try {
+            await sock.groupParticipantsUpdate(jid, [target.id], 'promote');
+            await send(sock, jid, { text: 'باااااامو يبن الملك باااامو يلاااااا 👑🔥' });
+            groupMetaCache.delete(jid);
+        } catch (promoteError) {
+            console.error('❌ فشل الترقية:', promoteError.message);
+            await send(sock, jid, { text: `❌ فشل واتساب في الترقية: ${promoteError.message}` }, { quoted: msg });
+        }
+        
     } catch (err) { 
         console.error('❌ خطأ في إضافة:', err.message); 
-        await send(sock, jid, { text: '❌ حدث خطأ أثناء إضافة الإشراف. تأكد أن البوت لديه الصلاحيات.' }, { quoted: msg });
+        await send(sock, jid, { text: '❌ حدث خطأ أثناء إضافة الإشراف.' }, { quoted: msg });
     }
 }
 
@@ -271,14 +290,9 @@ const commands = new Map([
         }
     }],
 
-    // ═══════════════ كل أشكال كتابة كلمة إضافة ═══════════════
-    ['.إضافة', addAdminCommand],
-    ['.اضافة', addAdminCommand],
-    ['.إضافه', addAdminCommand],
+    // ═══════════════ أمر الإضافة (بعد الفلترة الذكية، كلمة واحدة تكفي) ═══════════════
     ['.اضافه', addAdminCommand],
-    ['.أضافه', addAdminCommand],
-    ['.أضافة', addAdminCommand],
-    // ════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════════════════
 
     ['.زرف', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
@@ -432,6 +446,12 @@ async function handleMessage(sock, msg) {
     if (sentStore.has(msg.key.id)) return;
 
     const text = extractText(msg);
+    
+    // عشان نتطمن إن البوت واصل له الأمر
+    if (text.startsWith('.')) {
+        console.log(`📥 أمر تم استقباله: [${text}]`);
+    }
+
     const command = commands.get(text);
     if (!command) return;
 
