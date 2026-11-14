@@ -414,7 +414,7 @@ const commands = new Map([
     }],
     // ═════════════════════════════════════════════════════════════════════════
 
-    // ═══════════════ أمر العرض (باستخدام downloadMediaMessage) ═══════════════
+    // ═══════════════ أمر العرض (باستخدام downloadMediaMessage مع طباعة الخطأ) ═══════════════
     ['.عرض', async (sock, jid, msg) => {
         try {
             const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.imageMessage?.contextInfo || msg.message?.videoMessage?.contextInfo;
@@ -424,51 +424,50 @@ const commands = new Map([
 
             const normalizedQuoted = normalizeMessageContent(quoted);
             
-            // تحديد نوع الميديا
             let mediaType = null;
-            let mediaMsg = null;
-
-            if (normalizedQuoted?.imageMessage) { mediaType = 'image'; mediaMsg = normalizedQuoted.imageMessage; }
-            else if (normalizedQuoted?.videoMessage) { mediaType = 'video'; mediaMsg = normalizedQuoted.videoMessage; }
-            else if (normalizedQuoted?.audioMessage) { mediaType = 'audio'; mediaMsg = normalizedQuoted.audioMessage; }
+            if (normalizedQuoted?.imageMessage) mediaType = 'image';
+            else if (normalizedQuoted?.videoMessage) mediaType = 'video';
+            else if (normalizedQuoted?.audioMessage) mediaType = 'audio';
             
             if (!mediaType) {
                 return await send(sock, jid, { text: '❌ الرسالة دي مش عرض لمرة واحدة (صورة/فيديو/فويش)!' }, { quoted: msg });
             }
 
+            // بناء الرسالة الوهمية بالـ IDs الصح
+            const targetMsg = {
+                key: {
+                    remoteJid: jid,
+                    fromMe: false,
+                    id: contextInfo.stanzaId,
+                    participant: contextInfo.participant || jid
+                },
+                message: quoted
+            };
+
             let buffer;
             try {
-                // استخدام downloadMediaMessage الأقوى في التعامل مع العرض لمرة واحدة
-                const targetMsg = {
-                    key: {
-                        remoteJid: jid,
-                        fromMe: false,
-                        id: contextInfo.stanzaId,
-                        participant: contextInfo.participant
-                    },
-                    message: quoted
-                };
                 buffer = await downloadMediaMessage(targetMsg, 'buffer', { }, { logger, reuploadRequest: sock.updateMediaMessage });
             } catch (e) {
-                // لو فشلت، بنستخدم الطريقة القديمة كخطة بديلة
+                // لو الطريقة الأولى فشلت، نجرب الطريقة التانية
+                const mediaMsg = normalizedQuoted[mediaType + 'Message'];
                 const stream = await downloadContentFromMessage(mediaMsg, mediaType);
                 let bufferData = Buffer.from([]);
                 for await (const chunk of stream) { bufferData = Buffer.concat([bufferData, chunk]); }
                 buffer = bufferData;
             }
 
-            // إرسال الميديا
             if (mediaType === 'image') {
                 await send(sock, jid, { image: buffer, caption: 'تم العرض ✅' }, { quoted: msg });
             } else if (mediaType === 'video') {
                 await send(sock, jid, { video: buffer, caption: 'تم العرض ✅' }, { quoted: msg });
             } else if (mediaType === 'audio') {
-                await send(sock, jid, { audio: buffer, mimetype: mediaMsg.mimetype || 'audio/mp4', ptt: mediaMsg.ptt || false }, { quoted: msg });
+                await send(sock, jid, { audio: buffer, mimetype: normalizedQuoted.audioMessage.mimetype || 'audio/mp4', ptt: normalizedQuoted.audioMessage.ptt || false }, { quoted: msg });
             }
 
         } catch (err) { 
             console.error('❌ خطأ في عرض:', err.message); 
-            await send(sock, jid, { text: `❌ حدث خطأ أثناء محاولة عرض الرسالة.\nالسبب: ${err.message}` }, { quoted: msg });
+            // هنا بنبعتلك الخطأ الحقيقي اللي جاي من واتساب
+            await send(sock, jid, { text: `❌ فشل التحميل.\nالسبب: ${err.message}` }, { quoted: msg });
         }
     }]
     // ═════════════════════════════════════════════════════════════════════════
