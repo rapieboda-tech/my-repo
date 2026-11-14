@@ -1,6 +1,6 @@
 'use strict';
 
-// ═══════════════ 1. الاستيراد (Imports) ═══════════════
+// ═══════════════ 1. الاستيراد ═══════════════
 const {
     default: makeWASocket,
     useMultiFileAuthState,
@@ -21,11 +21,10 @@ const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
 const OWNER_NUMBER = '201144953155';
 const logger = pino({ level: 'silent' });
 
-// ذاكرة مؤقتة عشان البوت ميردش على رسايله (ده اللي بيمنع البطء)
-const sentStore = new Map();
-// كاش بيانات الجروبات (السر وراء سرعة أوامر الإدارة)
-const groupMetaCache = new Map();
-const GROUP_META_TTL = 3 * 60 * 1000; // 3 دقايق
+// الذاكرة المؤقتة (السر وراء السرعة)
+const sentStore = new Set(); // Set أسرع بكتير من Map
+const groupMetaCache = new Map(); // كاش بيانات الجروبات
+const GROUP_META_TTL = 5 * 60 * 1000; // صلاحية الكاش: 5 دقايق
 
 let thumbnail = undefined;
 let currentSock = null;
@@ -51,15 +50,17 @@ function getThumbnail() {
 
 const isLinked = (creds) => Boolean(creds?.registered || creds?.account);
 
-// استخراج النص بأسرع طريقة ممكنة (من غير أي دوال تقيلة)
+// استخراج النص فوراً بدون تعقيد
 function getQuickText(msg) {
     const m = msg.message;
     if (!m) return '';
-    const text = m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || '';
-    return text.trim().replace(/^\.\s*/, '.');
+    let text = (m.conversation || m.extendedTextMessage?.text || '').trim();
+    // توحيد الحروف العربية عشان يتعرف على الأوامر مهما كتبتها
+    text = text.replace(/[إأآا]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي');
+    text = text.replace(/^\.\s*/, '.'); // لو فيه مسافة بعد النقطة
+    return text;
 }
 
-// جلب بيانات الجروب (الكاش بيخليها فورية)
 async function getGroupMeta(sock, jid) {
     const cached = groupMetaCache.get(jid);
     if (cached && Date.now() - cached.ts < GROUP_META_TTL) return cached.data;
@@ -68,7 +69,6 @@ async function getGroupMeta(sock, jid) {
     return data;
 }
 
-// فحص الصلاحيات (البوت واليوزر)
 async function checkAdmin(sock, jid, msg) {
     const groupMetadata = await getGroupMeta(sock, jid);
     const participants = groupMetadata.participants || [];
@@ -90,11 +90,9 @@ async function checkAdmin(sock, jid, msg) {
     return { isBotAdmin, isSenderAdmin, participants, botIds, senderIds, groupMetadata };
 }
 
-// استخراج الشخص المستهدف (منشن أو ريبلاي)
 function getTarget(msg, participants) {
     const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.imageMessage?.contextInfo || msg.message?.videoMessage?.contextInfo;
     if (!contextInfo) return null;
-    
     const targetJid = contextInfo.mentionedJid?.[0] || contextInfo.participant;
     if (!targetJid) return null;
     
@@ -106,12 +104,11 @@ function getTarget(msg, participants) {
     return targetParticipant || { id: targetJid, admin: null };
 }
 
-// دالة الإرسال (بتسجل الرسالة عشان البوت ميعالجهاش تاني)
 async function send(sock, jid, content, options) {
     const sent = await sock.sendMessage(jid, content, options);
     if (sent?.key?.id) {
-        sentStore.set(sent.key.id, true);
-        if (sentStore.size > 500) sentStore.delete(sentStore.keys().next().value);
+        sentStore.add(sent.key.id);
+        if (sentStore.size > 500) sentStore.delete(sentStore.values().next().value);
     }
     return sent;
 }
@@ -163,7 +160,7 @@ const commands = new Map([
         if (!isSenderAdmin || !isBotAdmin) return await send(sock, jid, { text: '❌ لازم إنت والبوت تكونوا مشرفين!' }, { quoted: msg });
         if (!groupMetadata.announce) return await send(sock, jid, { text: '⚠️ الجروب مفتوح بالفعل!' }, { quoted: msg });
         await sock.groupSettingUpdate(jid, 'not_announcement');
-        groupMetaCache.delete(jid); // مسح الكاش عشان يتحدث
+        groupMetaCache.delete(jid);
         await send(sock, jid, { text: '✅ *تم فتح الجروب!* 🔓' });
     }],
 
@@ -198,30 +195,37 @@ const commands = new Map([
         groupMetaCache.delete(jid);
         await send(sock, jid, { text: `باااااامو يبن الملك باااامو يلاااااا 👑🔥 @${target.id.split('@')[0]}`, mentions: [target.id] });
     }],
+    
+    ['.إضافه', async (sock, jid, msg) => {
+        // نفس كود الإضافة بس بألف بدون همزة
+        await commands.get('.اضافه')(sock, jid, msg);
+    }],
 
     ['.زرف', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ للجروبات فقط!' }, { quoted: msg });
-        const { isBotAdmin, isSenderAdmin, participants } = await checkAdmin(sock, jid, msg);
+        const { isBotAdmin, isSenderAdmin, participants, botIds, senderIds } = await checkAdmin(sock, jid, msg);
         if (!isSenderAdmin || !isBotAdmin) return await send(sock, jid, { text: '❌ لازم إنت والبوت تكونوا مشرفين!' }, { quoted: msg });
 
-        // 1. سحب الإشرافات
-        const adminsToDemote = participants.filter(p => p.admin === 'admin').map(p => p.id);
+        // السحر كله هنا: بنسحب إشراف المشرفين العاديين بس (ما عدا البوت، اللي بعت، والمؤسس)
+        const adminsToDemote = participants.filter(p => {
+            if (p.admin !== 'admin') return false;
+            const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
+            const isBot = pIds.some(id => botIds.includes(id));
+            const isSender = pIds.some(id => senderIds.includes(id));
+            return !isBot && !isSender;
+        }).map(p => p.id);
+
         if (adminsToDemote.length > 0) await sock.groupParticipantsUpdate(jid, adminsToDemote, 'demote');
         
-        // 2. تغيير الصورة والاسم والوصف
         if (getThumbnail()) await sock.updateProfilePicture(jid, { url: THUMB_PATH });
         await sock.groupUpdateDescription(jid, 'عمكم كايدو 🩸');
         await sock.groupUpdateSubject(jid, 'كايدو عمك 🩸');
-        
-        // 3. قفل الجروب
         await sock.groupSettingUpdate(jid, 'announcement');
         groupMetaCache.delete(jid);
         
-        // 4. إرسال الرسالة بالمنشن المخفي (بعد مهلة بسيطة عشان واتساب ميتلخبطش)
-        setTimeout(async () => {
-            const mentionJids = participants.map(p => p.id);
-            await send(sock, jid, { text: `*كايدو عمك 🩸*`, mentions: mentionJids });
-        }, 500);
+        // المنشن المخفي (بعد ما كل التغييرات تخلص)
+        const mentionJids = participants.map(p => p.id);
+        await send(sock, jid, { text: `*كايدو عمك 🩸*`, mentions: mentionJids });
     }],
 
     ['.صفي', async (sock, jid, msg) => {
@@ -269,26 +273,26 @@ async function handleMessage(sock, msg) {
     const jid = msg?.key?.remoteJid;
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
     
-    // 1. تجاهل رسايل البوت نفسه فوراً
+    // 1. تجاهل رسايل البوت نفسه فوراً (عشان ميعملش لوب ويبطأ)
     if (sentStore.has(msg.key.id)) return;
 
     // 2. استخراج النص بسرعة
     const text = getQuickText(msg);
-    if (!text) return; // لو مش نص (صورة بدون كابشن مثلاً)، اخرج فوراً
+    if (!text) return; // لو مش نص، اخرج فوراً
 
     // 3. استخراج أول كلمة
-    const firstWord = text.split(/\s+/)[0];
+    const firstWord = text.split(' ')[0];
 
-    // 4. لو مش أمر من أوامرنا، اخرج فوراً (ده السر في السرعة)
+    // 4. لو مش أمر من أوامرنا، اخرج فوراً (السر وراء السرعة)
     if (!commands.has(firstWord)) return;
 
     console.log(`📥 أمر: [${firstWord}]`);
     
-    // 5. تنفيذ الأمر
+    // 5. تنفيذ الأمر في مسار منفصل عشان ميعطلش باقي الرسايل
     try {
         await commands.get(firstWord)(sock, jid, msg);
     } catch (err) {
-        console.error(`❌ خطأ في تنفيذ ${firstWord}:`, err.message);
+        console.error(`❌ خطأ في ${firstWord}:`, err.message);
     }
 }
 
@@ -330,7 +334,7 @@ async function startBot() {
         browser: Browsers.ubuntu('Chrome'), 
         syncFullHistory: false, 
         markOnlineOnConnect: false,
-        cachedGroupMetadata: async (jid) => groupMetaCache.get(jid)?.data // السر وراء سرعة الجروبات
+        cachedGroupMetadata: async (jid) => groupMetaCache.get(jid)?.data
     });
     
     currentSock = sock;
