@@ -394,18 +394,22 @@ const commands = new Map([
         } catch (err) { console.error('❌ خطأ في فوقه:', err.message); }
     }],
 
-    // ═══════════════ أمر المنشن (النسخة القديمة اللي إنت طلبتها بدون نقطة) ═══════════════
+    // ═══════════════ أمر المنشن (المنشن الجماعي الحقيقي) ═══════════════
     ['منشن', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
-            const groupMetadata = await getGroupMetadata(sock, jid);
-            const participants = groupMetadata.participants || [];
-            let mentionJids = participants.map(p => p.id);
-            let mentionText = mentionJids.map(id => `@${id.split('@')[0]}`).join(' ');
+            const { isBotAdmin } = await checkAdmin(sock, jid, msg);
+            // لو الجروب بيمنع المنشن للعوام والبوت مش أدمن، الكود هيحاول برضه بس واتساب هيرفض
+            // عشان كده بنحاول نبعتها بالطريقة الرسمية للمجموعات
             
             await send(sock, jid, { 
-                text: `> 𝑲𝒂𝒊𝒅𝒐\n${mentionText}`, 
-                mentions: mentionJids 
+                text: `> 𝑲𝒂𝒊𝒅𝒐`, 
+                contextInfo: { 
+                    groupMentions: [{ 
+                        groupJid: jid, 
+                        groupSubject: '> 𝑲𝒂𝒊𝒅𝒐' 
+                    }] 
+                } 
             }, { quoted: msg });
         } catch (err) {
             console.error('❌ خطأ في منشن:', err.message);
