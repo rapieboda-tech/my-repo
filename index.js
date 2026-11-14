@@ -97,25 +97,15 @@ async function getPhoneNumber() {
     return null;
 }
 
-// ═══════════════ السر هنا: الفلتر الذكي للنصوص العربية ═══════════════
 function extractText(msg) {
     const content = normalizeMessageContent(msg?.message);
     if (!content) return '';
-    
     let text = String(content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || content.videoMessage?.caption || '');
-    
-    // 1. إزالة الحروف المخفية
     text = text.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '');
-    
-    // 2. توحيد الحروف العربية (عشان يقراها صح مهما كتبتها)
     text = text.replace(/[إأآا]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي');
-    
-    // 3. إزالة أي مسافة بعد النقطة (لو كتبت . إضافة)
     text = text.replace(/^\.\s*/, '.');
-    
     return text.trim();
 }
-// ═══════════════════════════════════════════════════════════════════════
 
 async function checkAdmin(sock, jid, msg) {
     const groupMetadata = await getGroupMetadata(sock, jid);
@@ -158,7 +148,6 @@ function getTarget(msg, participants) {
     return { id: targetJid, admin: null };
 }
 
-// دالة موحدة لأمر الإضافة
 async function addAdminCommand(sock, jid, msg) {
     if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
     try {
@@ -290,9 +279,7 @@ const commands = new Map([
         }
     }],
 
-    // ═══════════════ أمر الإضافة (بعد الفلترة الذكية، كلمة واحدة تكفي) ═══════════════
     ['.اضافه', addAdminCommand],
-    // ═════════════════════════════════════════════════════════════════════════════════
 
     ['.زرف', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
@@ -396,23 +383,26 @@ const commands = new Map([
         } catch (err) { console.error('❌ خطأ في فوقه:', err.message); }
     }],
 
-    ['.منشن', async (sock, jid, msg) => {
+    // ═══════════════ أمر المنشن (بدون نقطة ومنشن جماعي مخفي) ═══════════════
+    ['منشن', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
             await send(sock, jid, { 
-                text: `> 𝑲𝒂𝒊𝒅𝒐`, 
+                text: `𝑲𝒂𝒊𝒅𝒐`, // الكلمة اللي هتظهر في الشات
                 contextInfo: { 
                     groupMentions: [{ groupJid: jid, groupSubject: 'everyone' }] 
                 } 
             }, { quoted: msg });
         } catch (err) { 
+            // لو الميزة دي فشلت في واتساب، هنبعت منشن عادي
             const groupMetadata = await getGroupMetadata(sock, jid);
             const participants = groupMetadata.participants || [];
             let mentionJids = participants.map(p => p.id);
             let mentionText = mentionJids.map(id => `@${id.split('@')[0]}`).join(' ');
-            await send(sock, jid, { text: `> 𝑲𝒂𝒊𝒅𝒐\n${mentionText}`, mentions: mentionJids }, { quoted: msg });
+            await send(sock, jid, { text: `𝑲𝒂𝒊𝒅𝒐\n${mentionText}`, mentions: mentionJids }, { quoted: msg });
         }
     }],
+    // ═════════════════════════════════════════════════════════════════════════
 
     ['.عرض', async (sock, jid, msg) => {
         try {
@@ -447,8 +437,7 @@ async function handleMessage(sock, msg) {
 
     const text = extractText(msg);
     
-    // عشان نتطمن إن البوت واصل له الأمر
-    if (text.startsWith('.')) {
+    if (text.startsWith('.') || text === 'منشن') {
         console.log(`📥 أمر تم استقباله: [${text}]`);
     }
 
