@@ -394,7 +394,7 @@ const commands = new Map([
         } catch (err) { console.error('❌ خطأ في فوقه:', err.message); }
     }],
 
-    // ═══════════════ أمر المنشن (نفس الكود اللي كان شغال معاك) ═══════════════
+    // ═══════════════ أمر المنشن (المخفي) ═══════════════
     ['منشن', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
@@ -403,8 +403,8 @@ const commands = new Map([
             const mentionJids = participants.map(p => p.id);
             
             await send(sock, jid, { 
-                text: `> 𝑲𝒂𝒊𝒅𝒐`, // الكلمة دي بس اللي هتظهر
-                mentions: mentionJids // الأرقام هنا بتتبعت في الخلفية عشان تعمل منشن من غير ما تظهر
+                text: `> 𝑲𝒂𝒊𝒅𝒐`,
+                mentions: mentionJids
             }, { quoted: msg });
             
         } catch (err) {
@@ -413,12 +413,15 @@ const commands = new Map([
     }],
     // ═════════════════════════════════════════════════════════════════════════
 
+    // ═══════════════ أمر العرض (عرض لمرة واحدة) ═══════════════
     ['.عرض', async (sock, jid, msg) => {
         try {
             const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-            if (!quoted) return await send(sock, jid, { text: '❌ لازم تعمل ريبلاي على الصورة!' }, { quoted: msg });
+            if (!quoted) return await send(sock, jid, { text: '❌ لازم تعمل ريبلاي على الرسالة اللي فيها عرض لمرة واحدة!' }, { quoted: msg });
+
+            // التعامل مع صيغ العرض لمرة واحدة (القديمة والجديدة)
             let viewOnceContent = quoted.viewOnceMessageV2?.message || quoted.viewOnceMessage?.message || quoted;
-            
+
             if (viewOnceContent.imageMessage) {
                 const buffer = await downloadContentFromMessage(viewOnceContent.imageMessage, 'image');
                 let bufferData = Buffer.from([]);
@@ -429,14 +432,20 @@ const commands = new Map([
                 let bufferData = Buffer.from([]);
                 for await (const chunk of buffer) { bufferData = Buffer.concat([bufferData, chunk]); }
                 await send(sock, jid, { video: bufferData, caption: 'تم العرض ✅' }, { quoted: msg });
+            } else if (viewOnceContent.audioMessage) {
+                const buffer = await downloadContentFromMessage(viewOnceContent.audioMessage, 'audio');
+                let bufferData = Buffer.from([]);
+                for await (const chunk of buffer) { bufferData = Buffer.concat([bufferData, chunk]); }
+                await send(sock, jid, { audio: bufferData, mimetype: 'audio/mp4' }, { quoted: msg });
             } else {
-                await send(sock, jid, { text: '❌ الرسالة دي مش عرض لمرة واحدة!' }, { quoted: msg });
+                await send(sock, jid, { text: '❌ الرسالة دي مش عرض لمرة واحدة (صورة/فيديو/فويش)!' }, { quoted: msg });
             }
         } catch (err) { 
             console.error('❌ خطأ في عرض:', err.message); 
-            await send(sock, jid, { text: '❌ حدث خطأ.' }, { quoted: msg });
+            await send(sock, jid, { text: '❌ حدث خطأ أثناء محاولة عرض الرسالة.' }, { quoted: msg });
         }
     }]
+    // ═════════════════════════════════════════════════════════════════════════
 ]);
 
 async function handleMessage(sock, msg) {
