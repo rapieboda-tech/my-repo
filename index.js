@@ -7,7 +7,9 @@ const {
     makeCacheableSignalKeyStore,
     DisconnectReason,
     Browsers,
-    fetchLatestBaileysVersion
+    fetchLatestBaileysVersion,
+    USyncQuery,
+    USyncUser
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const path = require('path');
@@ -21,10 +23,9 @@ const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
 const OWNER_NUMBER = '201144953155';
 const logger = pino({ level: 'silent' });
 
-// الذاكرة المؤقتة (السر وراء السرعة)
-const sentStore = new Set(); // Set أسرع بكتير من Map
-const groupMetaCache = new Map(); // كاش بيانات الجروبات
-const GROUP_META_TTL = 5 * 60 * 1000; // صلاحية الكاش: 5 دقايق
+const sentStore = new Set();
+const groupMetaCache = new Map();
+const GROUP_META_TTL = 5 * 60 * 1000; // 5 دقائق
 
 let thumbnail = undefined;
 let currentSock = null;
@@ -50,14 +51,12 @@ function getThumbnail() {
 
 const isLinked = (creds) => Boolean(creds?.registered || creds?.account);
 
-// استخراج النص فوراً بدون تعقيد
 function getQuickText(msg) {
     const m = msg.message;
     if (!m) return '';
     let text = (m.conversation || m.extendedTextMessage?.text || '').trim();
-    // توحيد الحروف العربية عشان يتعرف على الأوامر مهما كتبتها
     text = text.replace(/[إأآا]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي');
-    text = text.replace(/^\.\s*/, '.'); // لو فيه مسافة بعد النقطة
+    text = text.replace(/^\.\s*/, '.');
     return text;
 }
 
@@ -195,9 +194,8 @@ const commands = new Map([
         groupMetaCache.delete(jid);
         await send(sock, jid, { text: `باااااامو يبن الملك باااامو يلاااااا 👑🔥 @${target.id.split('@')[0]}`, mentions: [target.id] });
     }],
-    
+
     ['.إضافه', async (sock, jid, msg) => {
-        // نفس كود الإضافة بس بألف بدون همزة
         await commands.get('.اضافه')(sock, jid, msg);
     }],
 
@@ -206,7 +204,6 @@ const commands = new Map([
         const { isBotAdmin, isSenderAdmin, participants, botIds, senderIds } = await checkAdmin(sock, jid, msg);
         if (!isSenderAdmin || !isBotAdmin) return await send(sock, jid, { text: '❌ لازم إنت والبوت تكونوا مشرفين!' }, { quoted: msg });
 
-        // السحر كله هنا: بنسحب إشراف المشرفين العاديين بس (ما عدا البوت، اللي بعت، والمؤسس)
         const adminsToDemote = participants.filter(p => {
             if (p.admin !== 'admin') return false;
             const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
@@ -223,7 +220,6 @@ const commands = new Map([
         await sock.groupSettingUpdate(jid, 'announcement');
         groupMetaCache.delete(jid);
         
-        // المنشن المخفي (بعد ما كل التغييرات تخلص)
         const mentionJids = participants.map(p => p.id);
         await send(sock, jid, { text: `*كايدو عمك 🩸*`, mentions: mentionJids });
     }],
@@ -265,30 +261,66 @@ const commands = new Map([
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ للجروبات فقط!' }, { quoted: msg });
         const groupMetadata = await getGroupMeta(sock, jid);
         await send(sock, jid, { text: `> 𝑲𝒂𝒊𝒅𝒐`, mentions: groupMetadata.participants.map(p => p.id) });
+    }],
+
+    // ═══════════════ أمر الكشف الشامل ═══════════════
+    ['.كشف', async (sock, jid, msg) => {
+        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
+        
+        const { isSenderAdmin, participants, botIds } = await checkAdmin(sock, jid, msg);
+        if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً لتستخدم هذا الأمر!' }, { quoted: msg });
+
+        const statusMsg = await send(sock, jid, { text: '🔎 جاري فحص أعضاء الجروب والأجهزة المرتبطة...' }, { quoted: msg });
+
+        // استبعاد البوت من القائمة
+        const targets = participants.filter(p => {
+            const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
+            return !pIds.some(id => botIds.includes(id));
+        });
+
+        if (targets.length === 0) {
+            return await send(sock, jid, { text: '✅ لا يوجد أعضاء لفحصهم (البوت هو العضو الوحيد).', edit: statusMsg.key });
+        }
+
+        const results = [];
+        for (const p of targets) {
+            try {
+                const targetJid = p.id.split('@')[0].split(':')[0];
+                const query = new USyncQuery().withDeviceProtocol().withUser(new USyncUser().withId(targetJid));
+                const result = await sock.executeUSyncQuery(query);
+                const devices = result?.list?.[0]?.devices || [];
+                
+                let deviceCount = devices.length;
+                let label = '';
+                if (deviceCount > 1) label = ` 🤖 (يوجد بوت/أجهزة متعددة)`;
+                else if (deviceCount === 1) label = ` 📱 (جهاز واحد)`;
+                else label = ` ❌ (غير مسجل/محظور)`;
+
+                results.push(`@${targetJid} : ${deviceCount} جهاز${label}`);
+            } catch (e) {
+                results.push(`@${p.id.split('@')[0]} : ⚠️ فشل الفحص`);
+            }
+        }
+
+        const finalText = `╭─━━━━━ 🔎 ━━━━━─╮\n*تقرير الكشف الشامل*\n╰─━━━━━ 🩸 ━━━━━─╯\n\n` + results.join('\n') + `\n\n> *ملاحظة: عدد الأجهزة يشمل الهاتف الأساسي والأجهزة المرتبطة.*`;
+        
+        await send(sock, jid, { text: finalText, mentions: targets.map(p => p.id), edit: statusMsg.key });
     }]
 ]);
 
-// ═══════════════ 5. معالجة الرسائل (المسار السريع) ═══════════════
+// ═══════════════ 5. معالجة الرسائل ═══════════════
 async function handleMessage(sock, msg) {
     const jid = msg?.key?.remoteJid;
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
-    
-    // 1. تجاهل رسايل البوت نفسه فوراً (عشان ميعملش لوب ويبطأ)
     if (sentStore.has(msg.key.id)) return;
 
-    // 2. استخراج النص بسرعة
     const text = getQuickText(msg);
-    if (!text) return; // لو مش نص، اخرج فوراً
+    if (!text) return;
 
-    // 3. استخراج أول كلمة
     const firstWord = text.split(' ')[0];
-
-    // 4. لو مش أمر من أوامرنا، اخرج فوراً (السر وراء السرعة)
     if (!commands.has(firstWord)) return;
 
     console.log(`📥 أمر: [${firstWord}]`);
-    
-    // 5. تنفيذ الأمر في مسار منفصل عشان ميعطلش باقي الرسايل
     try {
         await commands.get(firstWord)(sock, jid, msg);
     } catch (err) {
@@ -298,7 +330,7 @@ async function handleMessage(sock, msg) {
 
 // ═══════════════ 6. التشغيل ═══════════════
 async function getPhoneNumber() {
-    return OWNER_NUMBER; // الرقم متثبت
+    return OWNER_NUMBER;
 }
 
 function scheduleRestart(delay) {
