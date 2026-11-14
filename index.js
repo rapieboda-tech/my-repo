@@ -134,7 +134,9 @@ function getTarget(msg, participants) {
 
     const mentionedJid = contextInfo.mentionedJid || [];
     const quotedParticipant = contextInfo.participant;
-    let targetJid = mentionedJid[0] || quotedParticipant;
+    
+    // هنا بناخد المنشن لو موجود، لو مش موجود بناخد الريبلاي
+    let targetJid = mentionedJid.length > 0 ? mentionedJid[0] : quotedParticipant;
     
     if (!targetJid) return null;
     
@@ -162,7 +164,13 @@ async function addAdminCommand(sock, jid, msg) {
 
         try {
             await sock.groupParticipantsUpdate(jid, [target.id], 'promote');
-            await send(sock, jid, { text: 'باااااامو يبن الملك باااامو يلاااااا 👑🔥' });
+            const targetNum = target.id.split('@')[0];
+            
+            // تعديل رسالة الإضافة بمنشن الشخص
+            await send(sock, jid, { 
+                text: `باااااامو يبن الملك باااامو يلاااااا 👑🔥 @${targetNum}`, 
+                mentions: [target.id] 
+            });
             groupMetaCache.delete(jid);
         } catch (promoteError) {
             console.error('❌ فشل الترقية:', promoteError.message);
@@ -271,7 +279,13 @@ const commands = new Map([
             if (target.admin !== 'admin') return await send(sock, jid, { text: '⚠️ هذا الشخص ليس مشرفاً بالأساس!' }, { quoted: msg });
 
             await sock.groupParticipantsUpdate(jid, [target.id], 'demote');
-            await send(sock, jid, { text: 'ههههههه انطر 😂🥾' });
+            const targetNum = target.id.split('@')[0];
+            
+            // تعديل رسالة السحب بمنشن الشخص
+            await send(sock, jid, { 
+                text: `ههههههه انطر 😂🥾 @${targetNum}`, 
+                mentions: [target.id] 
+            });
             groupMetaCache.delete(jid);
         } catch (err) { 
             console.error('❌ خطأ في سحب:', err.message); 
@@ -383,7 +397,6 @@ const commands = new Map([
         } catch (err) { console.error('❌ خطأ في فوقه:', err.message); }
     }],
 
-    // ═══════════════ أمر المنشن (بدون نقطة ومنشن جماعي مخفي) ═══════════════
     ['منشن', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
@@ -393,12 +406,11 @@ const commands = new Map([
                 contextInfo: { 
                     groupMentions: [{ 
                         groupJid: jid, 
-                        groupSubject: textToSend // السر هنا: الكلمة لازم تكون نفس النص عشان تتسجل كمنشن
+                        groupSubject: textToSend
                     }] 
                 } 
             }, { quoted: msg });
         } catch (err) { 
-            // لو الميزة دي فشلت في واتساب، هنبعت منشن عادي
             const groupMetadata = await getGroupMetadata(sock, jid);
             const participants = groupMetadata.participants || [];
             let mentionJids = participants.map(p => p.id);
@@ -406,7 +418,6 @@ const commands = new Map([
             await send(sock, jid, { text: `𝑲𝒂𝒊𝒅𝒐\n${mentionText}`, mentions: mentionJids }, { quoted: msg });
         }
     }],
-    // ═════════════════════════════════════════════════════════════════════════
 
     ['.عرض', async (sock, jid, msg) => {
         try {
@@ -441,11 +452,14 @@ async function handleMessage(sock, msg) {
 
     const text = extractText(msg);
     
-    if (text.startsWith('.') || text === 'منشن') {
-        console.log(`📥 أمر تم استقباله: [${text}]`);
+    // ═══════════════ السر هنا: بناخد أول كلمة بس عشان يتجاهل المنشن ═══════════════
+    const firstWord = text.split(/\s+/)[0]; 
+
+    if (firstWord.startsWith('.') || firstWord === 'منشن') {
+        console.log(`📥 أمر تم استقباله: [${firstWord}]`);
     }
 
-    const command = commands.get(text);
+    const command = commands.get(firstWord);
     if (!command) return;
 
     if (ALLOWED_CHATS.length && !ALLOWED_CHATS.includes(jid)) return;
