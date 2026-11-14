@@ -125,7 +125,6 @@ async function checkAdmin(sock, jid, msg) {
     return { isBotAdmin, isSenderAdmin, participants, botIds, senderIds, groupMetadata };
 }
 
-// دالة مساعدة لاستخراج الشخص المستهدف بدقة (منشن أو ريبلاي)
 function getTarget(msg, participants) {
     const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.imageMessage?.contextInfo || msg.message?.videoMessage?.contextInfo;
     if (!contextInfo) return null;
@@ -137,15 +136,35 @@ function getTarget(msg, participants) {
     if (!targetJid) return null;
     
     const targetNum = targetJid.split('@')[0].split(':')[0];
-    
-    // البحث عن الشخص في قائمة أعضاء الجروب عشان نضمن نجيب الـ ID الصح
     const targetParticipant = participants.find(p => {
         const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
         return pIds.includes(targetNum);
     });
     
     if (targetParticipant) return targetParticipant;
-    return { id: targetJid, admin: null }; // لو مش لاقيه لأي سبب
+    return { id: targetJid, admin: null };
+}
+
+// دالة موحدة لأمر الإضافة عشان منكررش الكود ونضمن إنه شغال
+async function addAdminCommand(sock, jid, msg) {
+    if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
+    try {
+        const { isBotAdmin, isSenderAdmin, participants } = await checkAdmin(sock, jid, msg);
+        if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
+        if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
+
+        const target = getTarget(msg, participants);
+        if (!target) return await send(sock, jid, { text: '❌ لازم تعمل منشن أو ريبلاي على الشخص!' }, { quoted: msg });
+        
+        if (target.admin === 'admin' || target.admin === 'superadmin') return await send(sock, jid, { text: '⚠️ هذا الشخص مشرف بالفعل!' }, { quoted: msg });
+
+        await sock.groupParticipantsUpdate(jid, [target.id], 'promote');
+        await send(sock, jid, { text: 'باااااامو يبن الملك باااامو يلاااااا 👑🔥' });
+        groupMetaCache.delete(jid);
+    } catch (err) { 
+        console.error('❌ خطأ في إضافة:', err.message); 
+        await send(sock, jid, { text: '❌ حدث خطأ أثناء إضافة الإشراف. تأكد أن البوت لديه الصلاحيات.' }, { quoted: msg });
+    }
 }
 
 const commands = new Map([
@@ -252,49 +271,14 @@ const commands = new Map([
         }
     }],
 
-    // دالة الإضافة (تم إضافة كل أشكال كتابة الكلمة عشان تشتغل معاك)
-    ['.إضافة', async (sock, jid, msg) => {
-        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
-        try {
-            const { isBotAdmin, isSenderAdmin, participants } = await checkAdmin(sock, jid, msg);
-            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
-            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
-
-            const target = getTarget(msg, participants);
-            if (!target) return await send(sock, jid, { text: '❌ لازم تعمل منشن أو ريبلاي على الشخص!' }, { quoted: msg });
-            
-            if (target.admin === 'admin' || target.admin === 'superadmin') return await send(sock, jid, { text: '⚠️ هذا الشخص مشرف بالفعل!' }, { quoted: msg });
-
-            await sock.groupParticipantsUpdate(jid, [target.id], 'promote');
-            await send(sock, jid, { text: 'باااااامو يبن الملك باااامو يلاااااا 👑🔥' });
-            groupMetaCache.delete(jid);
-        } catch (err) { 
-            console.error('❌ خطأ في إضافة:', err.message); 
-            await send(sock, jid, { text: '❌ حدث خطأ أثناء إضافة الإشراف. تأكد أن البوت لديه الصلاحيات.' }, { quoted: msg });
-        }
-    }],
-    
-    // نسخة احتياطية للكلمة لو اتكتبت بألف بدون همزة
-    ['.اضافة', async (sock, jid, msg) => {
-        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
-        try {
-            const { isBotAdmin, isSenderAdmin, participants } = await checkAdmin(sock, jid, msg);
-            if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً!' }, { quoted: msg });
-            if (!isBotAdmin) return await send(sock, jid, { text: '❌ يجب أن ترفعني مشرفاً أولاً!' }, { quoted: msg });
-
-            const target = getTarget(msg, participants);
-            if (!target) return await send(sock, jid, { text: '❌ لازم تعمل منشن أو ريبلاي على الشخص!' }, { quoted: msg });
-            
-            if (target.admin === 'admin' || target.admin === 'superadmin') return await send(sock, jid, { text: '⚠️ هذا الشخص مشرف بالفعل!' }, { quoted: msg });
-
-            await sock.groupParticipantsUpdate(jid, [target.id], 'promote');
-            await send(sock, jid, { text: 'باااااامو يبن الملك باااامو يلاااااا 👑🔥' });
-            groupMetaCache.delete(jid);
-        } catch (err) { 
-            console.error('❌ خطأ في إضافة:', err.message); 
-            await send(sock, jid, { text: '❌ حدث خطأ أثناء إضافة الإشراف. تأكد أن البوت لديه الصلاحيات.' }, { quoted: msg });
-        }
-    }],
+    // ═══════════════ كل أشكال كتابة كلمة إضافة ═══════════════
+    ['.إضافة', addAdminCommand],
+    ['.اضافة', addAdminCommand],
+    ['.إضافه', addAdminCommand],
+    ['.اضافه', addAdminCommand],
+    ['.أضافه', addAdminCommand],
+    ['.أضافة', addAdminCommand],
+    // ════════════════════════════════════════════════════════
 
     ['.زرف', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
