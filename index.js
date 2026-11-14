@@ -6,6 +6,7 @@ const {
     makeCacheableSignalKeyStore,
     normalizeMessageContent,
     downloadContentFromMessage,
+    downloadMediaMessage,
     DisconnectReason,
     Browsers,
     fetchLatestBaileysVersion
@@ -22,9 +23,9 @@ const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
 const ALLOWED_CHATS = [];
 const logger = pino({ level: 'silent' });
 
-// ═══════════════ الذاكرة المؤقتة الذكية (بدل makeInMemoryStore) ═══════════════
+// ═══════════════ الذاكرة المؤقتة الذكية ═══════════════
 const incomingStore = new Map();
-// ═════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════
 
 let thumbnail = undefined;
 function getThumbnail() {
@@ -417,40 +418,40 @@ const commands = new Map([
     }],
     // ═════════════════════════════════════════════════════════════════════════
 
-    // ═══════════════ أمر العرض (باستخدام الذاكرة المؤقتة الجديدة) ═══════════════
+    // ═══════════════ أمر العرض (باستخدام downloadMediaMessage) ═══════════════
     ['.عرض', async (sock, jid, msg) => {
         try {
             const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
             if (!contextInfo) return await send(sock, jid, { text: '❌ لازم تعمل ريبلاي على الرسالة!' }, { quoted: msg });
 
             const stanzaId = contextInfo.stanzaId;
-            let quoted = contextInfo.quotedMessage;
+            const originalMsg = incomingStore.get(stanzaId);
             
-            // لو الرسالة الأصلية موجودة في الذاكرة، بنستخدمها
-            if (incomingStore.has(stanzaId)) {
-                quoted = incomingStore.get(stanzaId).message;
+            if (!originalMsg) {
+                return await send(sock, jid, { text: '❌ مش لاقي الرسالة الأصلية في الذاكرة. لازم البوت يكون شغال ساعة ما اتبعتت.' }, { quoted: msg });
             }
 
-            if (!quoted) return await send(sock, jid, { text: '❌ مش لاقي الرسالة.' }, { quoted: msg });
-
-            let normalizedQuoted = normalizeMessageContent(quoted);
-            
             let mediaType = null;
-            let mediaMsg = null;
-
-            if (normalizedQuoted?.imageMessage) { mediaType = 'image'; mediaMsg = normalizedQuoted.imageMessage; }
-            else if (normalizedQuoted?.videoMessage) { mediaType = 'video'; mediaMsg = normalizedQuoted.videoMessage; }
-            else if (normalizedQuoted?.audioMessage) { mediaType = 'audio'; mediaMsg = normalizedQuoted.audioMessage; }
+            let normalized = normalizeMessageContent(originalMsg.message);
+            
+            if (normalized?.imageMessage) mediaType = 'image';
+            else if (normalized?.videoMessage) mediaType = 'video';
+            else if (normalized?.audioMessage) mediaType = 'audio';
 
             if (!mediaType) return await send(sock, jid, { text: '❌ الرسالة دي مش عرض لمرة واحدة!' }, { quoted: msg });
 
-            const stream = await downloadContentFromMessage(mediaMsg, mediaType);
-            let bufferData = Buffer.from([]);
-            for await (const chunk of stream) { bufferData = Buffer.concat([bufferData, chunk]); }
+            let buffer;
+            try {
+                // دي الدالة اللي بتفك التشفير وتنزل الميديا
+                buffer = await downloadMediaMessage(originalMsg, 'buffer', { }, { logger, reuploadRequest: sock.updateMediaMessage });
+            } catch (e) {
+                console.error('❌ خطأ في التحميل:', e.message);
+                return await send(sock, jid, { text: `❌ فشل التحميل.\nالسبب: ${e.message}` }, { quoted: msg });
+            }
 
-            if (mediaType === 'image') await send(sock, jid, { image: bufferData, caption: 'تم العرض ✅' }, { quoted: msg });
-            else if (mediaType === 'video') await send(sock, jid, { video: bufferData, caption: 'تم العرض ✅' }, { quoted: msg });
-            else if (mediaType === 'audio') await send(sock, jid, { audio: bufferData, mimetype: mediaMsg.mimetype || 'audio/mp4', ptt: mediaMsg.ptt || false }, { quoted: msg });
+            if (mediaType === 'image') await send(sock, jid, { image: buffer, caption: 'تم العرض ✅' }, { quoted: msg });
+            else if (mediaType === 'video') await send(sock, jid, { video: buffer, caption: 'تم العرض ✅' }, { quoted: msg });
+            else if (mediaType === 'audio') await send(sock, jid, { audio: buffer, mimetype: normalized.audioMessage.mimetype || 'audio/mp4', ptt: normalized.audioMessage.ptt || false }, { quoted: msg });
 
         } catch (err) { 
             console.error('❌ خطأ في عرض:', err.message); 
@@ -465,7 +466,7 @@ async function handleMessage(sock, msg) {
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
     if (sentStore.has(msg.key.id)) return;
 
-    // حفظ الرسالة في الذاكرة المؤقتة (عشان أمر العرض)
+    // حفظ الرسالة في الذاكرة المؤقتة
     incomingStore.set(msg.key.id, msg);
     if (incomingStore.size > 50) incomingStore.delete(incomingStore.keys().next().value);
 
