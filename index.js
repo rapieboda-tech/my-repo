@@ -425,7 +425,7 @@ const commands = new Map([
     }],
     // ═════════════════════════════════════════════════════════════════════════
 
-    // ═══════════════ أمر العرض (باستخدام downloadMediaMessage) ═══════════════
+    // ═══════════════ أمر العرض (النسخة الجذرية) ═══════════════
     ['.عرض', async (sock, jid, msg) => {
         try {
             const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
