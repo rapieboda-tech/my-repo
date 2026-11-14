@@ -23,9 +23,9 @@ const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
 const ALLOWED_CHATS = [];
 const logger = pino({ level: 'silent' });
 
-// ═══════════════ الذاكرة المؤقتة الذكية ═══════════════
+// ═══════════════ الذاكرة المؤقتة لأمر العرض ═══════════════
 const incomingStore = new Map();
-// ═════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════
 
 let thumbnail = undefined;
 function getThumbnail() {
@@ -50,17 +50,21 @@ global.botTurbo = false;
 
 const groupBackup = new Map();
 const isLinked = (creds) => Boolean(creds?.registered || creds?.account);
+
+// ═══════════════ تحسين الكاش (السرعة الحقيقية) ═══════════════
 const groupMetaCache = new Map();
-const GROUP_META_TTL = 60 * 1000; 
+const GROUP_META_TTL = 60 * 1000; // 60 ثانية
 
 async function getGroupMetadata(sock, jid) {
-    if (!global.botTurbo) return sock.groupMetadata(jid);
     const cached = groupMetaCache.get(jid);
-    if (cached && Date.now() - cached.ts < GROUP_META_TTL) return cached.data;
+    if (cached && Date.now() - cached.ts < GROUP_META_TTL) {
+        return cached.data; // هيرد فوراً من الذاكرة
+    }
     const data = await sock.groupMetadata(jid);
     groupMetaCache.set(jid, { data, ts: Date.now() });
     return data;
 }
+// ══════════════════════════════════════════════════════════════
 
 const sentStore = new Map();
 const MAX_STORED = 500;
@@ -90,6 +94,7 @@ function ask(question) {
 }
 
 async function getPhoneNumber() {
+    // ═══════════════ رقم الربط متثبت هنا ═══════════════
     const preset = normalizePhone(process.env.PHONE_NUMBER || process.argv[2] || '201144953155');
     if (preset) return preset;
     if (!process.stdin.isTTY) return null;
@@ -141,7 +146,6 @@ function getTarget(msg, participants) {
     const quotedParticipant = contextInfo.participant;
     
     let targetJid = mentionedJid.length > 0 ? mentionedJid[0] : quotedParticipant;
-    
     if (!targetJid) return null;
     
     const targetNum = targetJid.split('@')[0].split(':')[0];
@@ -169,17 +173,15 @@ async function addAdminCommand(sock, jid, msg) {
         try {
             await sock.groupParticipantsUpdate(jid, [target.id], 'promote');
             const targetNum = target.id.split('@')[0];
-            
             await send(sock, jid, { 
                 text: `باااااامو يبن الملك باااامو يلاااااا 👑🔥 @${targetNum}`, 
                 mentions: [target.id] 
             });
-            groupMetaCache.delete(jid);
+            groupMetaCache.delete(jid); // مسح الكاش عشان يتحدث
         } catch (promoteError) {
             console.error('❌ فشل الترقية:', promoteError.message);
             await send(sock, jid, { text: `❌ فشل واتساب في الترقية: ${promoteError.message}` }, { quoted: msg });
         }
-        
     } catch (err) { 
         console.error('❌ خطأ في إضافة:', err.message); 
         await send(sock, jid, { text: '❌ حدث خطأ أثناء إضافة الإشراف.' }, { quoted: msg });
@@ -283,7 +285,6 @@ const commands = new Map([
 
             await sock.groupParticipantsUpdate(jid, [target.id], 'demote');
             const targetNum = target.id.split('@')[0];
-            
             await send(sock, jid, { 
                 text: `ههههههه انطر 😂🥾 @${targetNum}`, 
                 mentions: [target.id] 
@@ -428,7 +429,7 @@ const commands = new Map([
             const originalMsg = incomingStore.get(stanzaId);
             
             if (!originalMsg) {
-                return await send(sock, jid, { text: '❌ مش لاقي الرسالة الأصلية في الذاكرة. لازم البوت يكون شغال ساعة ما اتبعتت.' }, { quoted: msg });
+                return await send(sock, jid, { text: '❌ مش لاقي الرسالة الأصلية في الذاكرة.' }, { quoted: msg });
             }
 
             let mediaType = null;
@@ -442,7 +443,6 @@ const commands = new Map([
 
             let buffer;
             try {
-                // دي الدالة اللي بتفك التشفير وتنزل الميديا
                 buffer = await downloadMediaMessage(originalMsg, 'buffer', { }, { logger, reuploadRequest: sock.updateMediaMessage });
             } catch (e) {
                 console.error('❌ خطأ في التحميل:', e.message);
@@ -466,11 +466,16 @@ async function handleMessage(sock, msg) {
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
     if (sentStore.has(msg.key.id)) return;
 
-    // حفظ الرسالة في الذاكرة المؤقتة
-    incomingStore.set(msg.key.id, msg);
-    if (incomingStore.size > 50) incomingStore.delete(incomingStore.keys().next().value);
+    // تحسين السرعة: منحفظش غير الرسايل اللي فيها ميديا عشان أمر العرض
+    const content = normalizeMessageContent(msg.message);
+    if (content?.imageMessage || content?.videoMessage || content?.audioMessage) {
+        incomingStore.set(msg.key.id, msg);
+        if (incomingStore.size > 50) incomingStore.delete(incomingStore.keys().next().value);
+    }
 
     const text = extractText(msg);
+    if (!text) return;
+
     const firstWord = text.split(/\s+/)[0]; 
 
     if (firstWord.startsWith('.') || firstWord === 'منشن') {
@@ -514,8 +519,12 @@ async function startBot() {
     const sock = makeWASocket({
         ...(waVersion ? { version: waVersion } : {}),
         auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
-        logger, browser: Browsers.ubuntu('Chrome'), syncFullHistory: false, markOnlineOnConnect: false,
-        getMessage: async (key) => sentStore.get(key.id)
+        logger, 
+        browser: Browsers.ubuntu('Chrome'), 
+        syncFullHistory: false, 
+        markOnlineOnConnect: false,
+        getMessage: async (key) => sentStore.get(key.id),
+        cachedGroupMetadata: async (jid) => groupMetaCache.get(jid)?.data // تفعيل الكاش لواتساب نفسه
     });
     
     currentSock = sock;
