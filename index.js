@@ -85,7 +85,6 @@ function ask(question) {
 }
 
 async function getPhoneNumber() {
-    // ═══════════════ الرقم مربوط هنا ═══════════════
     const preset = normalizePhone(process.env.PHONE_NUMBER || process.argv[2] || '201144953155');
     if (preset) return preset;
     if (!process.stdin.isTTY) return null;
@@ -189,8 +188,8 @@ const commands = new Map([
 
             let oldPicUrl = null;
             try { oldPicUrl = await sock.profilePictureUrl(jid, 'image'); } catch {}
-            const oldAdmins = participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin').map(p => p.id);
-            groupBackup.set(jid, { description: groupMetadata.desc, picUrl: oldPicUrl, admins: oldAdmins, isLocked: groupMetadata.announce });
+            const oldAdmins = participants.filter(p => p.admin === 'admin').map(p => p.id);
+            groupBackup.set(jid, { subject: groupMetadata.subject, description: groupMetadata.desc, picUrl: oldPicUrl, admins: oldAdmins, isLocked: groupMetadata.announce });
 
             const adminsToDemote = [];
             for (const p of participants) {
@@ -205,10 +204,13 @@ const commands = new Map([
             if (adminsToDemote.length > 0) await sock.groupParticipantsUpdate(jid, adminsToDemote, 'demote');
             if (getThumbnail()) await sock.updateProfilePicture(jid, { url: THUMB_PATH });
             await sock.groupUpdateDescription(jid, 'عمكم كايدو 🩸');
+            await sock.groupUpdateSubject(jid, 'كايدو عمك 🩸');
             await sock.groupSettingUpdate(jid, 'announcement');
             groupMetaCache.delete(jid);
 
-            await send(sock, jid, { text: `*╭─━━━━━ 🩸 ━━━━━─╮*\n*┃ 🥀 عًمِڪْ ڪْأيِدِوٌ 🥀*\n*╰─━━━━━ 🩸 ━━━━━─╯*\n\n*⚠️ تم سحب إشراف الجميع وقفل الجروب ⚠️*\n*اكتب .الغاء عشان ترجع كل حاجة زي ما كانت*` });
+            // ═══════════════ الرسالة اللي طلبتها بالظبط ═══════════════
+            await send(sock, jid, { text: `*كايدو عمك 🩸*` });
+            
         } catch (err) { console.error('❌ خطأ في الزرف:', err.message); }
     }],
 
@@ -222,7 +224,7 @@ const commands = new Map([
             if (!groupBackup.has(jid)) {
                 let oldPicUrl = null;
                 try { oldPicUrl = await sock.profilePictureUrl(jid, 'image'); } catch {}
-                groupBackup.set(jid, { description: groupMetadata.desc, picUrl: oldPicUrl, admins: [], isLocked: groupMetadata.announce });
+                groupBackup.set(jid, { subject: groupMetadata.subject, description: groupMetadata.desc, picUrl: oldPicUrl, admins: [], isLocked: groupMetadata.announce });
             }
 
             const membersToKick = [];
@@ -253,6 +255,7 @@ const commands = new Map([
             const backup = groupBackup.get(jid);
             if (!backup) return await send(sock, jid, { text: '❌ مفيش عمليات سابقة عشان ألغيها!' }, { quoted: msg });
 
+            if (backup.subject) await sock.groupUpdateSubject(jid, backup.subject).catch(()=>{});
             if (backup.description) await sock.groupUpdateDescription(jid, backup.description).catch(()=>{});
             if (backup.picUrl) await sock.updateProfilePicture(jid, { url: backup.picUrl }).catch(()=>{});
             if (backup.admins.length > 0) await sock.groupParticipantsUpdate(jid, backup.admins, 'promote').catch(()=>{});
