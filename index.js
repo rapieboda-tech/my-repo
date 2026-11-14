@@ -394,26 +394,19 @@ const commands = new Map([
         } catch (err) { console.error('❌ خطأ في فوقه:', err.message); }
     }],
 
-    // ═══════════════ أمر المنشن (المنشن المخفي المضمون 100%) ═══════════════
+    // ═══════════════ أمر المنشن (الطريقة الرسمية 100%) ═══════════════
     ['منشن', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
-            const groupMetadata = await getGroupMetadata(sock, jid);
-            const participants = groupMetadata.participants || [];
-            const jids = participants.map(p => p.id);
-            
-            // إخفاء الأرقام باستخدام علامات LTR و Zero Width Space
-            let hiddenMentions = '';
-            for (const id of jids) {
-                hiddenMentions += `\u200E@${id.split('@')[0]}\u200E\u200B`;
-            }
-            
-            // إرسال كلمة 𝑲𝒂𝒊𝒅𝒐 ومعاها المنشن المخفي
             await send(sock, jid, { 
-                text: `𝑲𝒂𝒊𝒅𝒐\n${hiddenMentions}`, 
-                mentions: jids 
+                text: `𝑲𝒂𝒊𝒅𝒐`, 
+                contextInfo: { 
+                    groupMentions: [{ 
+                        groupJid: jid, 
+                        groupSubject: '𝑲𝒂𝒊𝒅𝒐' 
+                    }] 
+                } 
             }, { quoted: msg });
-            
         } catch (err) {
             console.error('❌ خطأ في منشن:', err.message);
         }
