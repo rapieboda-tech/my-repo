@@ -25,10 +25,11 @@ const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
 const OWNER_NUMBER = '201144953155';
 const logger = pino({ level: 'silent' });
 
-// الذاكرة المؤقتة (Cache)
-const incomingStore = new Map(); // لحفظ رسايل العرض لمرة واحدة
-const groupMetaCache = new Map(); // لحفظ بيانات الجروبات (سرعة خارقة)
-const GROUP_META_TTL = 60 * 1000; // دقيقة واحدة
+// الذاكرة المؤقتة
+const incomingStore = new Map(); // لحفظ رسايل الميديا (لأمر العرض)
+const sentStore = new Map(); // لحفظ رسايل البوت (عشان ميعالجهاش تاني)
+const groupMetaCache = new Map(); // لحفظ بيانات الجروبات (سرعة)
+const GROUP_META_TTL = 60 * 1000; // دقيقة
 
 // حالة البوت
 let thumbnail = undefined;
@@ -113,13 +114,14 @@ function getTarget(msg, participants) {
 
 async function send(sock, jid, content, options) {
     const sent = await sock.sendMessage(jid, content, options);
-    if (sent?.key?.id && sent.message) {
-        incomingStore.set(sent.key.id, sent); // لتتبع رسايل البوت لو احتاجنا
+    if (sent?.key?.id) {
+        sentStore.set(sent.key.id, true); // تسجيل الرسالة عشان البوت ميعالجهاش
+        if (sentStore.size > 500) sentStore.delete(sentStore.keys().next().value);
     }
     return sent;
 }
 
-// ═══════════════ 4. قائمة الأوامر ═══════════════
+// ═══════════════ 4. الأوامر ═══════════════
 const commands = new Map([
     ['تست', async (sock, jid, msg) => {
         const content = { text: '> 𝑲𝒂𝒊𝒅𝒐 𝐁𝐨𝐭 𝐢𝐬 𝐨𝐧𝐥𝐢𝐧𝐞 🌹' };
@@ -140,13 +142,13 @@ const commands = new Map([
         global.botTurbo = true;
         groupMetaCache.clear();
         if (global.gc) { try { global.gc(); } catch {} }
-        await send(sock, jid, { text: `🚀 *تم تفعيل وضع الصاروخ بنجاح!*` }, { quoted: msg });
+        await send(sock, jid, { text: `🚀 *تم تفعيل وضع الصاروخ!*` }, { quoted: msg });
     }],
 
     ['.فحص', async (sock, jid, msg) => {
         const start = performance.now();
         try { await sock.fetchStatus(jid); } catch {}
-        await send(sock, jid, { text: `⚡ *سرعة الاستجابة:*\n> ${(performance.now() - start).toFixed(2)} ms` }, { quoted: msg });
+        await send(sock, jid, { text: `⚡ *البينج:*\n> ${(performance.now() - start).toFixed(2)} ms` }, { quoted: msg });
     }],
 
     ['.الحاله', async (sock, jid, msg) => {
@@ -222,7 +224,7 @@ const commands = new Map([
 
     ['.صفي', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ للجروبات فقط!' }, { quoted: msg });
-        const { isBotAdmin, isSenderAdmin, participants } = await checkAdmin(sock, jid, msg);
+        const { isBotAdmin, isSenderAdmin, participants, botIds } = await checkAdmin(sock, jid, msg);
         if (!isSenderAdmin || !isBotAdmin) return await send(sock, jid, { text: '❌ لازم إنت والبوت تكونوا مشرفين!' }, { quoted: msg });
         
         const membersToKick = participants.filter(p => p.admin !== 'superadmin' && !botIds.includes(p.id)).map(p => p.id);
@@ -267,7 +269,7 @@ const commands = new Map([
             const stanzaId = contextInfo.stanzaId;
             let originalMsg = incomingStore.get(stanzaId);
 
-            // الخطة البديلة لو مش موجودة في الذاكرة
+            // خطة بديلة: نبني رسالة وهمية من الاقتباس لو مش موجودة في الذاكرة
             if (!originalMsg) {
                 originalMsg = {
                     key: { remoteJid: jid, fromMe: false, id: stanzaId, participant: contextInfo.participant || jid },
@@ -308,7 +310,10 @@ async function handleMessage(sock, msg) {
     const jid = msg?.key?.remoteJid;
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
     
-    // حفظ رسايل العرض لمرة واحدة فقط (توفير للرامات)
+    // ✅ منع البوت من معالجة رسايله هو (اللي كانت بتخليه يبطأ)
+    if (sentStore.has(msg.key.id)) return;
+
+    // حفظ رسايل الميديا فقط (لتوفير الرامات)
     const content = normalizeMessageContent(msg.message);
     if (content?.imageMessage || content?.videoMessage || content?.audioMessage || msg.message?.viewOnceMessage || msg.message?.viewOnceMessageV2) {
         incomingStore.set(msg.key.id, msg);
@@ -321,7 +326,6 @@ async function handleMessage(sock, msg) {
     const firstWord = text.split(/\s+/)[0];
     const command = commands.get(firstWord);
     
-    // لو الكلمة مش أمر، متكملش
     if (!command) return;
 
     console.log(`📥 أمر: [${firstWord}]`);
@@ -330,9 +334,7 @@ async function handleMessage(sock, msg) {
 
 // ═══════════════ 6. تشغيل البوت ═══════════════
 async function getPhoneNumber() {
-    const preset = normalizePhone(process.env.PHONE_NUMBER || process.argv[2] || OWNER_NUMBER);
-    if (preset) return preset;
-    return null; // في السيرفر مش بنسأل
+    return normalizePhone(process.env.PHONE_NUMBER || process.argv[2] || OWNER_NUMBER);
 }
 
 function scheduleRestart(delay) {
@@ -369,7 +371,7 @@ async function startBot() {
         syncFullHistory: false, 
         markOnlineOnConnect: false,
         getMessage: async (key) => incomingStore.get(key.id)?.message,
-        cachedGroupMetadata: async (jid) => groupMetaCache.get(jid)?.data // تفعيل السرعة
+        cachedGroupMetadata: async (jid) => groupMetaCache.get(jid)?.data
     });
     
     currentSock = sock;
