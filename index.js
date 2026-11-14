@@ -394,18 +394,18 @@ const commands = new Map([
         } catch (err) { console.error('❌ خطأ في فوقه:', err.message); }
     }],
 
-    // ═══════════════ أمر المنشن (الطريقة الرسمية 100%) ═══════════════
+    // ═══════════════ أمر المنشن (النسخة القديمة اللي إنت طلبتها بدون نقطة) ═══════════════
     ['منشن', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
+            const groupMetadata = await getGroupMetadata(sock, jid);
+            const participants = groupMetadata.participants || [];
+            let mentionJids = participants.map(p => p.id);
+            let mentionText = mentionJids.map(id => `@${id.split('@')[0]}`).join(' ');
+            
             await send(sock, jid, { 
-                text: `𝑲𝒂𝒊𝒅𝒐`, 
-                contextInfo: { 
-                    groupMentions: [{ 
-                        groupJid: jid, 
-                        groupSubject: '𝑲𝒂𝒊𝒅𝒐' 
-                    }] 
-                } 
+                text: `> 𝑲𝒂𝒊𝒅𝒐\n${mentionText}`, 
+                mentions: mentionJids 
             }, { quoted: msg });
         } catch (err) {
             console.error('❌ خطأ في منشن:', err.message);
