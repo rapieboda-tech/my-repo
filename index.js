@@ -387,10 +387,14 @@ const commands = new Map([
     ['منشن', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         try {
+            const textToSend = `𝑲𝒂𝒊𝒅𝒐`;
             await send(sock, jid, { 
-                text: `𝑲𝒂𝒊𝒅𝒐`, // الكلمة اللي هتظهر في الشات
+                text: textToSend, 
                 contextInfo: { 
-                    groupMentions: [{ groupJid: jid, groupSubject: 'everyone' }] 
+                    groupMentions: [{ 
+                        groupJid: jid, 
+                        groupSubject: textToSend // السر هنا: الكلمة لازم تكون نفس النص عشان تتسجل كمنشن
+                    }] 
                 } 
             }, { quoted: msg });
         } catch (err) { 
