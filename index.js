@@ -413,30 +413,32 @@ const commands = new Map([
     }],
     // ═════════════════════════════════════════════════════════════════════════
 
-    // ═══════════════ أمر العرض (عرض لمرة واحدة) ═══════════════
+    // ═══════════════ أمر العرض (عرض لمرة واحدة - النسخة المعدلة) ═══════════════
     ['.عرض', async (sock, jid, msg) => {
         try {
-            const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.imageMessage?.contextInfo || msg.message?.videoMessage?.contextInfo;
+            const quoted = contextInfo?.quotedMessage;
+            
             if (!quoted) return await send(sock, jid, { text: '❌ لازم تعمل ريبلاي على الرسالة اللي فيها عرض لمرة واحدة!' }, { quoted: msg });
 
-            // التعامل مع صيغ العرض لمرة واحدة (القديمة والجديدة)
-            let viewOnceContent = quoted.viewOnceMessageV2?.message || quoted.viewOnceMessage?.message || quoted;
+            // normalizeMessageContent بتفك أي طبقات (زي viewOnceMessageV2) وتجيب الميديا الأساسية
+            const normalizedQuoted = normalizeMessageContent(quoted);
 
-            if (viewOnceContent.imageMessage) {
-                const buffer = await downloadContentFromMessage(viewOnceContent.imageMessage, 'image');
+            if (normalizedQuoted?.imageMessage) {
+                const buffer = await downloadContentFromMessage(normalizedQuoted.imageMessage, 'image');
                 let bufferData = Buffer.from([]);
                 for await (const chunk of buffer) { bufferData = Buffer.concat([bufferData, chunk]); }
                 await send(sock, jid, { image: bufferData, caption: 'تم العرض ✅' }, { quoted: msg });
-            } else if (viewOnceContent.videoMessage) {
-                const buffer = await downloadContentFromMessage(viewOnceContent.videoMessage, 'video');
+            } else if (normalizedQuoted?.videoMessage) {
+                const buffer = await downloadContentFromMessage(normalizedQuoted.videoMessage, 'video');
                 let bufferData = Buffer.from([]);
                 for await (const chunk of buffer) { bufferData = Buffer.concat([bufferData, chunk]); }
                 await send(sock, jid, { video: bufferData, caption: 'تم العرض ✅' }, { quoted: msg });
-            } else if (viewOnceContent.audioMessage) {
-                const buffer = await downloadContentFromMessage(viewOnceContent.audioMessage, 'audio');
+            } else if (normalizedQuoted?.audioMessage) {
+                const buffer = await downloadContentFromMessage(normalizedQuoted.audioMessage, 'audio');
                 let bufferData = Buffer.from([]);
                 for await (const chunk of buffer) { bufferData = Buffer.concat([bufferData, chunk]); }
-                await send(sock, jid, { audio: bufferData, mimetype: 'audio/mp4' }, { quoted: msg });
+                await send(sock, jid, { audio: bufferData, mimetype: normalizedQuoted.audioMessage.mimetype || 'audio/mp4', ptt: normalizedQuoted.audioMessage.ptt || false }, { quoted: msg });
             } else {
                 await send(sock, jid, { text: '❌ الرسالة دي مش عرض لمرة واحدة (صورة/فيديو/فويش)!' }, { quoted: msg });
             }
