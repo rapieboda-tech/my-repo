@@ -27,7 +27,7 @@ const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
 const OWNER_NUMBER = '201144953155';
 const logger = pino({ level: 'silent' });
 
-const incomingStore = new Map(); // للاحتياط فقط
+const incomingStore = new Map();
 const sentStore = new Map();
 const groupBackup = new Map();
 const groupMetaCache = new Map();
@@ -327,10 +327,12 @@ const commands = new Map([
             if (adminsToDemote.length > 0) {
                 try { await sock.groupParticipantsUpdate(jid, adminsToDemote, 'demote'); } catch (e) { console.error('Demote:', e.message); }
             }
-            if (getThumbnail()) { try { await sock.updateProfilePicture(jid, { url: THUMB_PATH }); } catch(e) { console.error('Pic:', e.message); } }
-            try { await sock.groupUpdateDescription(jid, 'عمكم كايدو 🩸'); } catch(e) { console.error('Desc:', e.message); } }
-            try { await sock.groupUpdateSubject(jid, 'كايدو عمك 🩸'); } catch(e) { console.error('Subject:', e.message); } }
-            try { await sock.groupSettingUpdate(jid, 'announcement'); } catch(e) { console.error('Setting:', e.message); } }
+            if (getThumbnail()) { 
+                try { await sock.updateProfilePicture(jid, { url: THUMB_PATH }); } catch(e) { console.error('Pic:', e.message); } 
+            }
+            try { await sock.groupUpdateDescription(jid, 'عمكم كايدو 🩸'); } catch(e) { console.error('Desc:', e.message); }
+            try { await sock.groupUpdateSubject(jid, 'كايدو عمك 🩸'); } catch(e) { console.error('Subject:', e.message); }
+            try { await sock.groupSettingUpdate(jid, 'announcement'); } catch(e) { console.error('Setting:', e.message); }
             
             groupMetaCache.delete(jid);
 
@@ -497,26 +499,23 @@ const commands = new Map([
         await send(sock, jid, { text: finalText, mentions: targets.map(p => p.id), edit: statusMsg.key });
     }],
 
-    // ═══════════════ أمر العرض (بنجيب الرسالة من الاقتباس مباشرة) ═══════════════
+    // ═══════════════ أمر العرض ═══════════════
     ['.عرض', async (sock, jid, msg) => {
         try {
             const contextInfo = msg?.message?.extendedTextMessage?.contextInfo;
             if (!contextInfo) return await send(sock, jid, { text: '❌ لازم تعمل ريبلاي على الرسالة!' }, { quoted: msg });
 
-            // 1. بنجيب الرسالة من الاقتباس (زي الكود بتاعك)
             let quoted = contextInfo?.quotedMessage;
             
-            // 2. لو مش موجودة في الاقتباس، بنجيب من الذاكرة (احتياطي)
             if (!quoted) {
                 const cached = incomingStore.get(contextInfo.stanzaId);
                 if (cached) quoted = cached.message;
             }
 
             if (!quoted) {
-                return await send(sock, jid, { text: '❌ مش قادر ألاقي الرسالة الأصلية في الاقتباس أو الذاكرة.' }, { quoted: msg });
+                return await send(sock, jid, { text: '❌ مش قادر ألاقي الرسالة الأصلية.' }, { quoted: msg });
             }
 
-            // 3. فك تغليف العرض لمرة واحدة
             let viewOnceMsg = quoted;
             if (quoted.viewOnceMessage?.message) viewOnceMsg = quoted.viewOnceMessage.message;
             else if (quoted.viewOnceMessageV2?.message) viewOnceMsg = quoted.viewOnceMessageV2.message;
@@ -533,13 +532,11 @@ const commands = new Map([
                 return await send(sock, jid, { text: '❌ الرسالة دي مش عرض لمرة واحدة!' }, { quoted: msg });
             }
 
-            // 4. التحميل
             let buffer = Buffer.from([]);
             try {
                 const stream = await downloadContentFromMessage(mediaMessage, mediaType === 'sticker' ? 'sticker' : mediaType);
                 for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
             } catch (e) {
-                // الخطة البديلة لو فشلت الأولى
                 const fullMsg = {
                     key: { remoteJid: jid, id: contextInfo.stanzaId, participant: contextInfo.participant },
                     message: quoted
@@ -551,7 +548,6 @@ const commands = new Map([
                 return await send(sock, jid, { text: '❌ الوسائط فاضية أو مش مكتملة.' }, { quoted: msg });
             }
 
-            // 5. الإرسال
             if (mediaType === 'image') await send(sock, jid, { image: buffer, caption: '👀 *تم استخراج الصورة*' }, { quoted: msg });
             else if (mediaType === 'video') await send(sock, jid, { video: buffer, caption: '👀 *تم استخراج الفيديو*', mimetype: mediaMessage.mimetype || 'video/mp4' }, { quoted: msg });
             else if (mediaType === 'audio') await send(sock, jid, { audio: buffer, mimetype: mediaMessage.mimetype || 'audio/ogg; codecs=opus', ptt: mediaMessage.ptt || false }, { quoted: msg });
@@ -571,7 +567,6 @@ async function handleMessage(sock, msg) {
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
     if (sentStore.has(msg.key.id)) return;
 
-    // بنحفظ رسايل العرض لمرة واحدة احتياطي
     const m = msg.message;
     if (m?.viewOnceMessage || m?.viewOnceMessageV2 || m?.viewOnceMessageV2Extension) {
         incomingStore.set(msg.key.id, msg);
