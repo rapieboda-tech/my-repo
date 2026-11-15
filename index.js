@@ -5,11 +5,11 @@ const {
     default: makeWASocket,
     useMultiFileAuthState,
     makeCacheableSignalKeyStore,
+    downloadContentFromMessage,
+    downloadMediaMessage,
     DisconnectReason,
     Browsers,
-    fetchLatestBaileysVersion,
-    USyncQuery,
-    USyncUser
+    fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const path = require('path');
@@ -23,6 +23,7 @@ const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
 const OWNER_NUMBER = '201144953155';
 const logger = pino({ level: 'silent' });
 
+// الذاكرة المؤقتة للسرعة (بدون تخزين ميديا عشان ميبطأش)
 const sentStore = new Set();
 const groupMetaCache = new Map();
 const GROUP_META_TTL = 5 * 60 * 1000; // 5 دقائق
@@ -263,55 +264,123 @@ const commands = new Map([
         await send(sock, jid, { text: `> 𝑲𝒂𝒊𝒅𝒐`, mentions: groupMetadata.participants.map(p => p.id) });
     }],
 
-    // ═══════════════ أمر الكشف الشامل ═══════════════
-    ['.كشف', async (sock, jid, msg) => {
-        if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
-        
-        const { isSenderAdmin, participants, botIds } = await checkAdmin(sock, jid, msg);
-        if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً لتستخدم هذا الأمر!' }, { quoted: msg });
+    // ═══════════════ أمر عرض (الكود اللي إنت بعتهولي بالظبط) ═══════════════
+    ['.عرض', async (sock, jid, msg) => {
+        try {
+            // لازم يكون فيه رد على رسالة
+            const contextInfo = msg?.message?.extendedTextMessage?.contextInfo;
+            const quoted = contextInfo?.quotedMessage || msg?.quoted?.message || msg?.quoted;
 
-        const statusMsg = await send(sock, jid, { text: '🔎 جاري فحص أعضاء الجروب والأجهزة المرتبطة...' }, { quoted: msg });
-
-        // استبعاد البوت من القائمة
-        const targets = participants.filter(p => {
-            const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
-            return !pIds.some(id => botIds.includes(id));
-        });
-
-        if (targets.length === 0) {
-            return await send(sock, jid, { text: '✅ لا يوجد أعضاء لفحصهم (البوت هو العضو الوحيد).', edit: statusMsg.key });
-        }
-
-        const results = [];
-        for (const p of targets) {
-            try {
-                const targetJid = p.id.split('@')[0].split(':')[0];
-                const query = new USyncQuery().withDeviceProtocol().withUser(new USyncUser().withId(targetJid));
-                const result = await sock.executeUSyncQuery(query);
-                const devices = result?.list?.[0]?.devices || [];
-                
-                let deviceCount = devices.length;
-                let label = '';
-                if (deviceCount > 1) label = ` 🤖 (يوجد بوت/أجهزة متعددة)`;
-                else if (deviceCount === 1) label = ` 📱 (جهاز واحد)`;
-                else label = ` ❌ (غير مسجل/محظور)`;
-
-                results.push(`@${targetJid} : ${deviceCount} جهاز${label}`);
-            } catch (e) {
-                results.push(`@${p.id.split('@')[0]} : ⚠️ فشل الفحص`);
+            if (!quoted) {
+                return sock.sendMessage(jid, {
+                    text: '🎀 *طريقة الاستخدام:*\n\nرد على رسالة (صورة / فيديو / صوت) View Once واكتب `.عرض`'
+                }, { quoted: msg });
             }
-        }
 
-        const finalText = `╭─━━━━━ 🔎 ━━━━━─╮\n*تقرير الكشف الشامل*\n╰─━━━━━ 🩸 ━━━━━─╯\n\n` + results.join('\n') + `\n\n> *ملاحظة: عدد الأجهزة يشمل الهاتف الأساسي والأجهزة المرتبطة.*`;
-        
-        await send(sock, jid, { text: finalText, mentions: targets.map(p => p.id), edit: statusMsg.key });
+            // ========== استخراج الرسالة الأصلية ==========
+            let viewOnceMsg = quoted;
+
+            // ندعم كل إصدارات View Once
+            if (quoted.viewOnceMessage?.message) {
+                viewOnceMsg = quoted.viewOnceMessage.message;
+            } else if (quoted.viewOnceMessageV2?.message) {
+                viewOnceMsg = quoted.viewOnceMessageV2.message;
+            } else if (quoted.viewOnceMessageV2Extension?.message) {
+                viewOnceMsg = quoted.viewOnceMessageV2Extension.message;
+            }
+
+            // ========== تحديد نوع الوسائط ==========
+            let mediaType = null;
+            let mediaMessage = null;
+
+            if (viewOnceMsg.imageMessage) {
+                mediaType = 'image';
+                mediaMessage = viewOnceMsg.imageMessage;
+            } else if (viewOnceMsg.videoMessage) {
+                mediaType = 'video';
+                mediaMessage = viewOnceMsg.videoMessage;
+            } else if (viewOnceMsg.audioMessage) {
+                mediaType = 'audio';
+                mediaMessage = viewOnceMsg.audioMessage;
+            } else if (viewOnceMsg.documentMessage) {
+                mediaType = 'document';
+                mediaMessage = viewOnceMsg.documentMessage;
+            } else if (viewOnceMsg.stickerMessage) {
+                mediaType = 'sticker';
+                mediaMessage = viewOnceMsg.stickerMessage;
+            }
+
+            if (!mediaType || !mediaMessage) {
+                return sock.sendMessage(jid, {
+                    text: '❌ الرسالة دي مش View Once أو مفيهاش صورة/فيديو/صوت.'
+                }, { quoted: msg });
+            }
+
+            // ========== تحميل الوسائط ==========
+            let buffer = Buffer.from([]);
+
+            try {
+                const stream = await downloadContentFromMessage(mediaMessage, mediaType === 'sticker' ? 'sticker' : mediaType);
+                for await (const chunk of stream) {
+                    buffer = Buffer.concat([buffer, chunk]);
+                }
+            } catch (err) {
+                console.error('downloadContentFromMessage failed:', err);
+
+                // محاولة ثانية باستخدام downloadMediaMessage
+                try {
+                    const fullMsg = {
+                        key: {
+                            remoteJid: jid,
+                            id: contextInfo?.stanzaId || msg.key.id,
+                            participant: contextInfo?.participant
+                        },
+                        message: quoted
+                    };
+
+                    buffer = await downloadMediaMessage(fullMsg, 'buffer', {}, {
+                        logger: console,
+                        reuploadRequest: sock.updateMediaMessage
+                    });
+                } catch (err2) {
+                    console.error('downloadMediaMessage also failed:', err2);
+                    return sock.sendMessage(jid, {
+                        text: '❌ مش قادر أحمل الوسائط من الرسالة دي.\nممكن الرسالة اتمسحت أو منتهية.'
+                    }, { quoted: msg });
+                }
+            }
+
+            if (!buffer || buffer.length < 100) {
+                return sock.sendMessage(jid, {
+                    text: '❌ الوسائط فاضية أو مش مكتملة.'
+                }, { quoted: msg });
+            }
+
+            // ========== إرسال الوسائط ==========
+            if (mediaType === 'image') {
+                await sock.sendMessage(jid, { image: buffer, caption: '👀 *تم استخراج الصورة*' }, { quoted: msg });
+            } else if (mediaType === 'video') {
+                await sock.sendMessage(jid, { video: buffer, caption: '👀 *تم استخراج الفيديو*', mimetype: mediaMessage.mimetype || 'video/mp4' }, { quoted: msg });
+            } else if (mediaType === 'audio') {
+                await sock.sendMessage(jid, { audio: buffer, mimetype: mediaMessage.mimetype || 'audio/ogg; codecs=opus', ptt: mediaMessage.ptt || false }, { quoted: msg });
+            } else if (mediaType === 'sticker') {
+                await sock.sendMessage(jid, { sticker: buffer }, { quoted: msg });
+            } else if (mediaType === 'document') {
+                await sock.sendMessage(jid, { document: buffer, mimetype: mediaMessage.mimetype, fileName: mediaMessage.fileName || 'file' }, { quoted: msg });
+            }
+
+        } catch (error) {
+            console.error('[عرض] Error:', error);
+            await sock.sendMessage(jid, { text: '❌ حصل خطأ أثناء استخراج الوسائط.\n' + (error?.message || '') }, { quoted: msg });
+        }
     }]
 ]);
 
-// ═══════════════ 5. معالجة الرسائل ═══════════════
+// ═══════════════ 5. معالجة الرسائل (المسار السريع) ═══════════════
 async function handleMessage(sock, msg) {
     const jid = msg?.key?.remoteJid;
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
+    
     if (sentStore.has(msg.key.id)) return;
 
     const text = getQuickText(msg);
@@ -321,6 +390,7 @@ async function handleMessage(sock, msg) {
     if (!commands.has(firstWord)) return;
 
     console.log(`📥 أمر: [${firstWord}]`);
+    
     try {
         await commands.get(firstWord)(sock, jid, msg);
     } catch (err) {
