@@ -6,6 +6,7 @@ const {
     useMultiFileAuthState,
     makeCacheableSignalKeyStore,
     normalizeMessageContent,
+    downloadContentFromMessage,
     downloadMediaMessage,
     DisconnectReason,
     Browsers,
@@ -26,7 +27,7 @@ const THUMB_PATH = path.join(__dirname, 'media', 'kaido.png');
 const OWNER_NUMBER = '201144953155';
 const logger = pino({ level: 'silent' });
 
-const incomingStore = new Map();
+const incomingStore = new Map(); // للاحتياط فقط
 const sentStore = new Map();
 const groupBackup = new Map();
 const groupMetaCache = new Map();
@@ -327,9 +328,9 @@ const commands = new Map([
                 try { await sock.groupParticipantsUpdate(jid, adminsToDemote, 'demote'); } catch (e) { console.error('Demote:', e.message); }
             }
             if (getThumbnail()) { try { await sock.updateProfilePicture(jid, { url: THUMB_PATH }); } catch(e) { console.error('Pic:', e.message); } }
-            try { await sock.groupUpdateDescription(jid, 'عمكم كايدو 🩸'); } catch(e) { console.error('Desc:', e.message); }
-            try { await sock.groupUpdateSubject(jid, 'كايدو عمك 🩸'); } catch(e) { console.error('Subject:', e.message); }
-            try { await sock.groupSettingUpdate(jid, 'announcement'); } catch(e) { console.error('Setting:', e.message); }
+            try { await sock.groupUpdateDescription(jid, 'عمكم كايدو 🩸'); } catch(e) { console.error('Desc:', e.message); } }
+            try { await sock.groupUpdateSubject(jid, 'كايدو عمك 🩸'); } catch(e) { console.error('Subject:', e.message); } }
+            try { await sock.groupSettingUpdate(jid, 'announcement'); } catch(e) { console.error('Setting:', e.message); } }
             
             groupMetaCache.delete(jid);
 
@@ -456,56 +457,39 @@ const commands = new Map([
         await send(sock, jid, { text: `> 𝑲𝒂𝒊𝒅𝒐`, mentions: groupMetadata.participants.map(p => p.id) });
     }],
 
-    // ═══════════════ أمر الكشف (مُصلح) ═══════════════
+    // ═══════════════ أمر الكشف ═══════════════
     ['.كشف', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
-        
         const { isSenderAdmin, participants, botIds } = await checkAdmin(sock, jid, msg);
         if (!isSenderAdmin) return await send(sock, jid, { text: '❌ أنت لست مشرفاً لتستخدم هذا الأمر!' }, { quoted: msg });
 
         const statusMsg = await send(sock, jid, { text: '🔎 جاري فحص أعضاء الجروب والأجهزة المرتبطة...' }, { quoted: msg });
-
         const targets = participants.filter(p => {
             const pIds = [p.id, p.lid, p.phoneNumber].filter(Boolean).map(id => id.split('@')[0].split(':')[0]);
             return !pIds.some(id => botIds.includes(id));
         });
 
-        if (targets.length === 0) {
-            return await send(sock, jid, { text: '✅ لا يوجد أعضاء لفحصهم (البوت هو العضو الوحيد).', edit: statusMsg.key });
-        }
+        if (targets.length === 0) return await send(sock, jid, { text: '✅ لا يوجد أعضاء لفحصهم.', edit: statusMsg.key });
 
         const results = [];
         for (let i = 0; i < targets.length; i++) {
             const p = targets[i];
-            
-            // تحديث الحالة كل 3 أعضاء عشان تعرف إنه شغال
             if (i > 0 && i % 3 === 0) {
                 try { await send(sock, jid, { text: `🔎 جاري الفحص... (${i}/${targets.length})`, edit: statusMsg.key }); } catch(e){}
             }
-
             try {
-                // نحاول نجيب الـ JID الأساسي (PN) عشان الاستعلام يشتغل صح
                 let targetJid = p.id;
                 if (targetJid.endsWith('@lid') && p.phoneNumber) {
                     targetJid = p.phoneNumber.split('@')[0] + '@s.whatsapp.net';
                 }
-
                 const query = new USyncQuery().withDeviceProtocol().withUser(new USyncUser().withId(targetJid));
                 const result = await sock.executeUSyncQuery(query);
                 const devices = result?.list?.[0]?.devices || [];
-                
-                let deviceCount = devices.length;
-                let label = '';
-                if (deviceCount > 1) label = ` 🤖 (أجهزة متعددة)`;
-                else if (deviceCount === 1) label = ` 📱 (جهاز واحد)`;
-                else label = ` ❌ (غير مسجل)`;
-
-                results.push(`@${p.id.split('@')[0].split(':')[0]} : ${deviceCount} جهاز${label}`);
+                let label = devices.length > 1 ? ' 🤖 (أجهزة متعددة)' : devices.length === 1 ? ' 📱 (جهاز واحد)' : ' ❌ (غير مسجل)';
+                results.push(`@${p.id.split('@')[0].split(':')[0]} : ${devices.length} جهاز${label}`);
             } catch (e) {
                 results.push(`@${p.id.split('@')[0].split(':')[0]} : ⚠️ غير معروف`);
             }
-            
-            // تأخير بسيط عشان منعملش Rate Limit
             await new Promise(r => setTimeout(r, 400));
         }
 
@@ -513,42 +497,70 @@ const commands = new Map([
         await send(sock, jid, { text: finalText, mentions: targets.map(p => p.id), edit: statusMsg.key });
     }],
 
+    // ═══════════════ أمر العرض (بنجيب الرسالة من الاقتباس مباشرة) ═══════════════
     ['.عرض', async (sock, jid, msg) => {
         try {
-            const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
+            const contextInfo = msg?.message?.extendedTextMessage?.contextInfo;
             if (!contextInfo) return await send(sock, jid, { text: '❌ لازم تعمل ريبلاي على الرسالة!' }, { quoted: msg });
 
-            const stanzaId = contextInfo.stanzaId;
-            const originalMsg = incomingStore.get(stanzaId);
+            // 1. بنجيب الرسالة من الاقتباس (زي الكود بتاعك)
+            let quoted = contextInfo?.quotedMessage;
             
-            if (!originalMsg) {
-                return await send(sock, jid, { text: '❌ مش لاقي الرسالة الأصلية في الذاكرة.' }, { quoted: msg });
+            // 2. لو مش موجودة في الاقتباس، بنجيب من الذاكرة (احتياطي)
+            if (!quoted) {
+                const cached = incomingStore.get(contextInfo.stanzaId);
+                if (cached) quoted = cached.message;
             }
 
-            let mediaType = null;
-            let normalized = normalizeMessageContent(originalMsg.message);
-            
-            if (normalized?.imageMessage) mediaType = 'image';
-            else if (normalized?.videoMessage) mediaType = 'video';
-            else if (normalized?.audioMessage) mediaType = 'audio';
+            if (!quoted) {
+                return await send(sock, jid, { text: '❌ مش قادر ألاقي الرسالة الأصلية في الاقتباس أو الذاكرة.' }, { quoted: msg });
+            }
 
-            if (!mediaType) return await send(sock, jid, { text: '❌ الرسالة دي مش عرض لمرة واحدة!' }, { quoted: msg });
+            // 3. فك تغليف العرض لمرة واحدة
+            let viewOnceMsg = quoted;
+            if (quoted.viewOnceMessage?.message) viewOnceMsg = quoted.viewOnceMessage.message;
+            else if (quoted.viewOnceMessageV2?.message) viewOnceMsg = quoted.viewOnceMessageV2.message;
+            else if (quoted.viewOnceMessageV2Extension?.message) viewOnceMsg = quoted.viewOnceMessageV2Extension.message;
 
-            let buffer;
+            let mediaType = null, mediaMessage = null;
+            if (viewOnceMsg.imageMessage) { mediaType = 'image'; mediaMessage = viewOnceMsg.imageMessage; }
+            else if (viewOnceMsg.videoMessage) { mediaType = 'video'; mediaMessage = viewOnceMsg.videoMessage; }
+            else if (viewOnceMsg.audioMessage) { mediaType = 'audio'; mediaMessage = viewOnceMsg.audioMessage; }
+            else if (viewOnceMsg.documentMessage) { mediaType = 'document'; mediaMessage = viewOnceMsg.documentMessage; }
+            else if (viewOnceMsg.stickerMessage) { mediaType = 'sticker'; mediaMessage = viewOnceMsg.stickerMessage; }
+
+            if (!mediaType || !mediaMessage) {
+                return await send(sock, jid, { text: '❌ الرسالة دي مش عرض لمرة واحدة!' }, { quoted: msg });
+            }
+
+            // 4. التحميل
+            let buffer = Buffer.from([]);
             try {
-                buffer = await downloadMediaMessage(originalMsg, 'buffer', { }, { logger, reuploadRequest: sock.updateMediaMessage });
+                const stream = await downloadContentFromMessage(mediaMessage, mediaType === 'sticker' ? 'sticker' : mediaType);
+                for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
             } catch (e) {
-                console.error('❌ خطأ في التحميل:', e.message);
-                return await send(sock, jid, { text: `❌ فشل التحميل.\nالسبب: ${e.message}` }, { quoted: msg });
+                // الخطة البديلة لو فشلت الأولى
+                const fullMsg = {
+                    key: { remoteJid: jid, id: contextInfo.stanzaId, participant: contextInfo.participant },
+                    message: quoted
+                };
+                buffer = await downloadMediaMessage(fullMsg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
             }
 
-            if (mediaType === 'image') await send(sock, jid, { image: buffer, caption: 'تم العرض ✅' }, { quoted: msg });
-            else if (mediaType === 'video') await send(sock, jid, { video: buffer, caption: 'تم العرض ✅' }, { quoted: msg });
-            else if (mediaType === 'audio') await send(sock, jid, { audio: buffer, mimetype: normalized.audioMessage.mimetype || 'audio/mp4', ptt: normalized.audioMessage.ptt || false }, { quoted: msg });
+            if (!buffer || buffer.length < 100) {
+                return await send(sock, jid, { text: '❌ الوسائط فاضية أو مش مكتملة.' }, { quoted: msg });
+            }
 
-        } catch (err) { 
-            console.error('❌ خطأ في عرض:', err.message); 
-            await send(sock, jid, { text: `❌ فشل التحميل.\nالسبب: ${err.message}` }, { quoted: msg });
+            // 5. الإرسال
+            if (mediaType === 'image') await send(sock, jid, { image: buffer, caption: '👀 *تم استخراج الصورة*' }, { quoted: msg });
+            else if (mediaType === 'video') await send(sock, jid, { video: buffer, caption: '👀 *تم استخراج الفيديو*', mimetype: mediaMessage.mimetype || 'video/mp4' }, { quoted: msg });
+            else if (mediaType === 'audio') await send(sock, jid, { audio: buffer, mimetype: mediaMessage.mimetype || 'audio/ogg; codecs=opus', ptt: mediaMessage.ptt || false }, { quoted: msg });
+            else if (mediaType === 'sticker') await send(sock, jid, { sticker: buffer }, { quoted: msg });
+            else if (mediaType === 'document') await send(sock, jid, { document: buffer, mimetype: mediaMessage.mimetype, fileName: mediaMessage.fileName || 'file' }, { quoted: msg });
+
+        } catch (error) {
+            console.error('[عرض] Error:', error);
+            await send(sock, jid, { text: '❌ حصل خطأ.\n' + (error?.message || '') }, { quoted: msg });
         }
     }]
 ]);
@@ -559,6 +571,7 @@ async function handleMessage(sock, msg) {
     if (!msg?.message || !jid || jid === 'status@broadcast') return;
     if (sentStore.has(msg.key.id)) return;
 
+    // بنحفظ رسايل العرض لمرة واحدة احتياطي
     const m = msg.message;
     if (m?.viewOnceMessage || m?.viewOnceMessageV2 || m?.viewOnceMessageV2Extension) {
         incomingStore.set(msg.key.id, msg);
