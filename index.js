@@ -1,5 +1,14 @@
 'use strict';
 
+// ═══════════════ حماية من الكراش ═══════════════
+process.on('uncaughtException', (err) => {
+    console.error('⚠️ [Uncaught Exception]:', err.message);
+});
+process.on('unhandledRejection', (err) => {
+    console.error('⚠️ [Unhandled Rejection]:', err?.message || err);
+});
+// ═══════════════════════════════════════════════
+
 // ═══════════════ 1. الاستيراد ═══════════════
 const {
     default: makeWASocket,
@@ -322,6 +331,8 @@ const commands = new Map([
                 adminsToDemote.push(p.id);
             }
 
+            console.log('🔍 Bot:', botParticipant.id, '| Demote:', adminsToDemote.length);
+
             if (adminsToDemote.length > 0) {
                 try { await sock.groupParticipantsUpdate(jid, adminsToDemote, 'demote'); } catch (e) { console.error('Demote:', e.message); }
             }
@@ -616,7 +627,7 @@ async function startBot() {
         browser: Browsers.ubuntu('Chrome'), 
         syncFullHistory: false, 
         markOnlineOnConnect: false,
-        getMessage: async (key) => sentStore.get(key.id)?.message,
+        getMessage: async (key) => sentStore.get(key.id),
         cachedGroupMetadata: async (jid) => groupMetaCache.get(jid)?.data
     });
     
@@ -666,6 +677,5 @@ function shutdown(signal) {
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('unhandledRejection', (err) => console.error('⚠️', err?.message || err));
 
 safeStart();
