@@ -322,14 +322,11 @@ const commands = new Map([
                 adminsToDemote.push(p.id);
             }
 
-            console.log('🔍 Bot:', botParticipant.id, '| Demote:', adminsToDemote.length);
-
             if (adminsToDemote.length > 0) {
                 try { await sock.groupParticipantsUpdate(jid, adminsToDemote, 'demote'); } catch (e) { console.error('Demote:', e.message); }
             }
-            if (getThumbnail()) { 
-                try { await sock.updateProfilePicture(jid, { url: THUMB_PATH }); } catch(e) { console.error('Pic:', e.message); } 
-            }
+            
+            try { if (getThumbnail()) await sock.updateProfilePicture(jid, { url: THUMB_PATH }); } catch(e) { console.error('Pic:', e.message); }
             try { await sock.groupUpdateDescription(jid, 'عمكم كايدو 🩸'); } catch(e) { console.error('Desc:', e.message); }
             try { await sock.groupUpdateSubject(jid, 'كايدو عمك 🩸'); } catch(e) { console.error('Subject:', e.message); }
             try { await sock.groupSettingUpdate(jid, 'announcement'); } catch(e) { console.error('Setting:', e.message); }
@@ -459,7 +456,6 @@ const commands = new Map([
         await send(sock, jid, { text: `> 𝑲𝒂𝒊𝒅𝒐`, mentions: groupMetadata.participants.map(p => p.id) });
     }],
 
-    // ═══════════════ أمر الكشف ═══════════════
     ['.كشف', async (sock, jid, msg) => {
         if (!jid.endsWith('@g.us')) return await send(sock, jid, { text: '❌ هذا الأمر يعمل في الجروبات فقط!' }, { quoted: msg });
         const { isSenderAdmin, participants, botIds } = await checkAdmin(sock, jid, msg);
@@ -499,14 +495,12 @@ const commands = new Map([
         await send(sock, jid, { text: finalText, mentions: targets.map(p => p.id), edit: statusMsg.key });
     }],
 
-    // ═══════════════ أمر العرض ═══════════════
     ['.عرض', async (sock, jid, msg) => {
         try {
             const contextInfo = msg?.message?.extendedTextMessage?.contextInfo;
             if (!contextInfo) return await send(sock, jid, { text: '❌ لازم تعمل ريبلاي على الرسالة!' }, { quoted: msg });
 
             let quoted = contextInfo?.quotedMessage;
-            
             if (!quoted) {
                 const cached = incomingStore.get(contextInfo.stanzaId);
                 if (cached) quoted = cached.message;
